@@ -174,6 +174,11 @@ struct MenuBarPanel: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("PrizmX")
                         .font(.headline)
+                    if let caption = statusCaption {
+                        Text(caption)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     TimelineView(.periodic(from: .now, by: 1)) { context in
                         Text(sessionUptime(from: appModel.sessionStartedAt, now: context.date))
                             .font(.caption.monospacedDigit())
@@ -260,6 +265,16 @@ struct MenuBarPanel: View {
         openWindow(id: AppWindowID.main)
         NSApp.activate(ignoringOtherApps: true)
         DockPolicy.apply(menuBarOnly: appModel.menuBarOnly)
+    }
+
+    /// Transition feedback while the system applies the toggle.
+    private var statusCaption: String? {
+        switch appModel.dashboard.status {
+        case .connecting: "Connecting…"
+        case .reconnecting: "Reconnecting…"
+        case .disconnecting: "Disconnecting…"
+        default: nil
+        }
     }
 }
 
