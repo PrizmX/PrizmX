@@ -64,6 +64,9 @@ struct SurgeStyleMainWindow: View {
         }
         .sheet(item: $appModel.presentedMoreSheet) { sheet in
             switch sheet {
+            case .settings:
+                SettingsSheet()
+                    .environment(appModel)
             case .profiles:
                 ProfilesSheet()
                     .environment(appModel)

@@ -118,7 +118,7 @@ struct HomePane: View {
                 headline: takeoverHeadline,
                 proxyIsOn: $model.systemProxyEnabled,
                 tunIsOn: $model.tunModeEnabled,
-                systemProxyAvailable: false
+                systemProxyAvailable: true
             )
         case .subscription: profileWidget
         case .node: nodeWidget

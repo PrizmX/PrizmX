@@ -174,7 +174,6 @@ struct ComingSoonPane: View {
 
 struct MorePane: View {
     @Environment(AppModel.self) private var appModel
-    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         moreGrid
@@ -192,7 +191,7 @@ struct MorePane: View {
                             systemImage: "slider.horizontal.3",
                             tint: .indigo
                         ) {
-                            openSettings()
+                            appModel.presentedMoreSheet = .settings
                         }
                         LaunchTile(
                             title: "Profiles",
@@ -238,7 +237,39 @@ struct MorePane: View {
     }
 }
 
+struct SettingsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Settings")
+                    .font(.headline)
+                Text("Appearance, capture, and shortcuts.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            SettingsForm()
+        }
+        .padding(20)
+        .frame(minWidth: 520, minHeight: 520)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            SheetActionBar(onDone: { dismiss() })
+                .background(Color(nsColor: .windowBackgroundColor))
+        }
+    }
+}
+
 struct SettingsPane: View {
+    var body: some View {
+        SettingsForm()
+            .navigationTitle("Settings")
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
+
+private struct SettingsForm: View {
     @Environment(AppModel.self) private var appModel
 
     var body: some View {
@@ -268,7 +299,9 @@ struct SettingsPane: View {
                 Toggle("HTTP Capture", isOn: $appModel.httpCaptureEnabled)
                     .help("Menu bar uses the capture tint when the proxy is also on. Tunnel wiring comes later.")
                 Text(
-                    "These switches record the preferred capture mode. Wiring them into Network Extension preferences happens in the tunnel host."
+                    "TUN captures all traffic via FakeIP. System Proxy listens on mixed-port 7890 "
+                        + "(HTTP CONNECT and SOCKS5) and sets the macOS HTTP/HTTPS proxy. "
+                        + "Allow LAN binds that port on all interfaces."
                 )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -289,8 +322,6 @@ struct SettingsPane: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
-        .navigationTitle("Settings")
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private func labeledShortcut(_ name: String, _ keys: String) -> some View {

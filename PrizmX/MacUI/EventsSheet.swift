@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import PrizmXServices
 
-/// Tunnel runtime events (App Group `logs/tunnel.log`), newest first.
+/// Tunnel runtime events (App Group `logs/tunnel.log`), oldest first.
 /// Per-flow request data belongs to the Inspector, not this log.
 struct EventsSheet: View {
     @Environment(\.dismiss) private var dismiss
@@ -18,22 +18,32 @@ struct EventsSheet: View {
                     .foregroundStyle(.secondary)
             }
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
-                    if lines.isEmpty {
-                        Text("No events yet.")
-                            .foregroundStyle(.tertiary)
-                    } else {
-                        ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                            Text(line)
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundStyle(color(for: line))
-                                .textSelection(.enabled)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        if lines.isEmpty {
+                            Text("No events yet.")
+                                .foregroundStyle(.tertiary)
+                                .id("empty")
+                        } else {
+                            ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                                Text(line)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(color(for: line))
+                                    .textSelection(.enabled)
+                                    .id(index)
+                            }
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10)
+                .onChange(of: lines.count) {
+                    scrollToLatest(proxy)
+                }
+                .onAppear {
+                    scrollToLatest(proxy)
+                }
             }
             .background(Color(nsColor: .controlBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -74,8 +84,14 @@ struct EventsSheet: View {
 
     private func refresh() {
         let text = TunnelLog.read()
-        let rows = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        lines = rows.reversed()
+        lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    }
+
+    private func scrollToLatest(_ proxy: ScrollViewProxy) {
+        guard let last = lines.indices.last else { return }
+        withAnimation(.easeOut(duration: 0.15)) {
+            proxy.scrollTo(last, anchor: .bottom)
+        }
     }
 
     private func color(for line: String) -> Color {

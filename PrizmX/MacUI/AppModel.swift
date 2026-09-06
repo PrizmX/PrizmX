@@ -63,6 +63,7 @@ enum OutboundMode: String, CaseIterable, Identifiable, Hashable {
 }
 
 enum MoreSheet: String, Identifiable, Hashable {
+    case settings
     case profiles
     case events
 
@@ -179,12 +180,15 @@ final class AppModel {
     var inspectorGrouping: InspectorGrouping = .app
     var inspectorFilter = ""
     var selectedInspectorRequestID: InspectorRequest.ID?
+    var inspectorActiveFlows: [FlowRecord] = []
+    var inspectorRecentFlows: [FlowRecord] = []
     var egressIP = "—"
 
     var outboundMode: OutboundMode {
         didSet {
             guard outboundMode != oldValue else { return }
             UserDefaults.standard.set(outboundMode.rawValue, forKey: DefaultsKey.outboundMode)
+            persistOutboundMode()
         }
     }
 
@@ -199,19 +203,21 @@ final class AppModel {
     var systemProxyEnabled: Bool {
         didSet {
             UserDefaults.standard.set(systemProxyEnabled, forKey: DefaultsKey.systemProxyEnabled)
+            Task { await applyCaptureMode() }
         }
     }
 
     var tunModeEnabled: Bool {
         didSet {
             UserDefaults.standard.set(tunModeEnabled, forKey: DefaultsKey.tunModeEnabled)
-            Task { await applyTunMode() }
+            Task { await applyCaptureMode() }
         }
     }
 
     var allowLANEnabled: Bool {
         didSet {
             UserDefaults.standard.set(allowLANEnabled, forKey: DefaultsKey.allowLANEnabled)
+            Task { await applyCaptureMode() }
         }
     }
 
@@ -253,6 +259,18 @@ final class AppModel {
             outboundMode = .rule
             sessionStartedAt = Date().addingTimeInterval(-3_723)
             trafficLedger = .preview
+            inspectorRecentFlows = [
+                FlowRecord(
+                    startedAt: Date().addingTimeInterval(-8),
+                    endpoint: Endpoint(domain: "github.com", port: 443),
+                    via: "Proxies",
+                    uplinkBytes: 12_000,
+                    downlinkBytes: 180_000,
+                    milliseconds: 1_840,
+                    clientEnd: "eof",
+                    remoteEnd: "eof"
+                )
+            ]
         } else {
             let profiles = ProfileStore()
             dashboard = DashboardViewModel(
@@ -288,10 +306,16 @@ final class AppModel {
             if TunnelLifecycleStore.stopWasUserInitiated() {
                 tunModeEnabled = false
                 UserDefaults.standard.set(false, forKey: DefaultsKey.tunModeEnabled)
-            } else if tunModeEnabled {
-                Task { await applyTunMode() }
+            } else if tunModeEnabled || systemProxyEnabled {
+                Task { await applyCaptureMode() }
             }
+            persistOutboundMode()
         }
+    }
+
+    private func persistOutboundMode() {
+        let group = dashboard.profiles.activeProfile?.selectedGroupName
+        Task { await dashboard.vpn.notifyOutboundMode(outboundMode.rawValue, globalGroup: group) }
     }
 
     func applyLaunchPolicy() {
@@ -310,7 +334,10 @@ final class AppModel {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 guard let self, !Task.isCancelled else { return }
-                self.trafficLedger.ingest(self.dashboard.vpn.lastMetrics)
+                let metrics = self.dashboard.vpn.lastMetrics
+                self.trafficLedger.ingest(metrics)
+                self.inspectorActiveFlows = metrics.activeFlows
+                self.inspectorRecentFlows = metrics.recentFlows
             }
         }
     }
@@ -331,11 +358,35 @@ final class AppModel {
         return nodeList.latencyByNodeID[id] != nil
     }
 
-    var inspectorRequests: [InspectorRequest] { [] }
+    var inspectorRequests: [InspectorRequest] {
+        let flows = inspectorScope == .active ? inspectorActiveFlows : inspectorRecentFlows
+        var rows = flows.map(InspectorRequest.init(flow:))
+        let query = inspectorFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !query.isEmpty {
+            rows = rows.filter {
+                $0.url.localizedCaseInsensitiveContains(query)
+                    || $0.policy.localizedCaseInsensitiveContains(query)
+                    || $0.status.localizedCaseInsensitiveContains(query)
+            }
+        }
+        switch inspectorGrouping {
+        case .host:
+            rows.sort { $0.url < $1.url }
+        case .app:
+            rows.sort { $0.timestamp > $1.timestamp }
+        }
+        return rows
+    }
 
     var selectedInspectorRequest: InspectorRequest? {
         guard let selectedInspectorRequestID else { return nil }
         return inspectorRequests.first { $0.id == selectedInspectorRequestID }
+    }
+
+    func clearInspector() {
+        inspectorRecentFlows = []
+        selectedInspectorRequestID = nil
+        Task { await dashboard.vpn.clearFlows() }
     }
 
     func toggleConnection() async {
@@ -344,10 +395,25 @@ final class AppModel {
         await refreshEgressIP()
     }
 
+    /// Starts/stops the NE tunnel so its state follows TUN and System Proxy.
+    func applyCaptureMode() async {
+        let wantSession = tunModeEnabled || systemProxyEnabled
+        if !wantSession {
+            if isVPNOn { dashboard.vpn.stopVPN() }
+            return
+        }
+        let config = dashboard.profiles.activeProfile?.rawConfig ?? VPNManager.defaultDirectConfig
+        try? await dashboard.vpn.startVPN(
+            configText: config,
+            fakeIP: tunModeEnabled,
+            systemProxy: systemProxyEnabled,
+            allowLAN: allowLANEnabled
+        )
+    }
+
     /// Starts/stops the NE tunnel so its state follows `tunModeEnabled`.
     func applyTunMode() async {
-        guard tunModeEnabled != isVPNOn else { return }
-        await toggleConnection()
+        await applyCaptureMode()
     }
 
     func refreshEgressIP() async {
@@ -439,6 +505,24 @@ struct InspectorRequest: Identifiable, Hashable, Sendable {
     var uploadBytes: UInt64
     var downloadBytes: UInt64
     var url: String
+    var milliseconds: Int
+    var clientEnd: String
+    var remoteEnd: String
+
+    init(flow: FlowRecord) {
+        id = flow.id
+        timestamp = flow.startedAt
+        appName = "—"
+        status = flow.closed ? (flow.clientEnd.isEmpty ? "closed" : flow.clientEnd) : "active"
+        policy = flow.via
+        rule = flow.rule.isEmpty ? "—" : flow.rule
+        uploadBytes = flow.uplinkBytes
+        downloadBytes = flow.downlinkBytes
+        url = flow.endpoint.description
+        milliseconds = flow.milliseconds
+        clientEnd = flow.clientEnd
+        remoteEnd = flow.remoteEnd
+    }
 }
 
 enum DockPolicy {

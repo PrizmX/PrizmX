@@ -88,10 +88,12 @@ struct InspectorPane: View {
                 .help(appModel.inspectorGrouping.title)
             }
             ToolbarItem(placement: .primaryAction) {
-                Button("Clear", systemImage: "trash") {}
-                    .labelStyle(.iconOnly)
-                    .disabled(true)
-                    .help("Clear")
+                Button("Clear", systemImage: "trash") {
+                    appModel.clearInspector()
+                }
+                .labelStyle(.iconOnly)
+                .disabled(appModel.inspectorScope == .active || appModel.inspectorRecentFlows.isEmpty)
+                .help("Clear recent flows")
             }
         }
         .inspector(isPresented: detailPresented) {
@@ -103,6 +105,9 @@ struct InspectorPane: View {
                         LabeledContent("Status", value: request.status)
                         LabeledContent("Policy", value: request.policy)
                         LabeledContent("Rule", value: request.rule)
+                        LabeledContent("Duration", value: "\(request.milliseconds) ms")
+                        LabeledContent("Client", value: request.clientEnd)
+                        LabeledContent("Remote", value: request.remoteEnd)
                     }
                 }
                 .formStyle(.grouped)

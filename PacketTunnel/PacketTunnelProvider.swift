@@ -12,8 +12,15 @@ import PrizmXTUN
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private var stack: TUNStack?
     private var engine: Engine?
+    private var mixedPort: MixedPortServer?
     private var pumpTask: Task<Void, Never>?
     private var relayTask: Task<Void, Never>?
+    private var useFakeIP = true
+    private var systemProxy = false
+    private var allowLAN = false
+    private var mixedPortNumber = MixedPortServer.defaultPort
+    private var systemDNS: [String] = []
+    private var ipv6FakeIP = false
     private let log = Logger(subsystem: "app.prizmx", category: "PacketTunnel")
 
     // MARK: - Start
@@ -48,6 +55,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         )
         let useFakeIP = boot.useFakeIP
         let systemDNS = boot.systemDNS
+        self.useFakeIP = useFakeIP
+        self.systemProxy = boot.systemProxy
+        self.allowLAN = boot.allowLAN
+        self.mixedPortNumber = boot.mixedPort
+        self.systemDNS = systemDNS
         let pinPreview = boot.pinnedNodeAddresses.map { "\($0.key)→\($0.value.map(\.description))" }.sorted().joined(separator: ",")
         TunnelLog.write(
             .info,
@@ -55,6 +67,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         )
 
         let engine = try boot.makeEngine()
+        self.ipv6FakeIP = engine.dns.settings.ipv6
         TunnelLog.write(
             .info,
             "engine ready rules=\(engine.router.rules.count) nodes=\(engine.nodeManager.nodesByID.count) groups=\(engine.nodeManager.groupsByName.count)"
@@ -68,7 +81,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             fakeIP: useFakeIP ? FakeIPAllocator() : nil,
             fakeIPFilter: engine.dns.settings.fakeIPFilter,
             dns: engine.dns,
-            dnsPolicy: { host in engine.dnsPolicy(host: host) },
+            dnsPolicy: { host in await engine.dnsPolicy(host: host) },
+            ipv6: engine.dns.settings.ipv6,
             onOutput: { packets in
                 guard !packets.isEmpty else { return }
                 let protocols = packets.map { packet -> NSNumber in
@@ -103,8 +117,22 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             }
         }
 
+        try await applyMixedPort(
+            engine: engine,
+            enabled: boot.systemProxy,
+            port: boot.mixedPort,
+            allowLAN: boot.allowLAN
+        )
+
         // 3. Virtual NIC: FakeIP 198.18.0.0/16 only (Direct uses kernel).
-        let settings = Self.makeNetworkSettings(useFakeIP: useFakeIP, dnsServers: systemDNS)
+        // System Proxy without TUN uses a dummy /32 so nothing is captured.
+        let settings = Self.makeNetworkSettings(
+            useFakeIP: useFakeIP,
+            systemProxy: boot.systemProxy,
+            mixedPort: boot.mixedPort,
+            dnsServers: systemDNS,
+            ipv6: engine.dns.settings.ipv6
+        )
         try await setTunnelNetworkSettings(settings)
 
         // 4. Pump TUN packets into SwiftTCP.
@@ -133,12 +161,59 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             do {
                 try engine?.nodeManager.select(nodeID: nodeID, inGroup: group)
                 PolicySelectionStore.set(nodeID, inGroup: group)
+                engine?.applyGlobalGroup(group)
                 TunnelLog.write(.info, "select \(group) → \(nodeID)")
                 completionHandler?(try? TunnelIPC.encode(.success()))
             } catch {
                 TunnelLog.write(.error, "select \(group) → \(nodeID) failed: \(error.localizedDescription)")
                 completionHandler?(try? TunnelIPC.encode(.failure(error.localizedDescription)))
             }
+        case .setOutboundMode:
+            guard let raw = request.outboundMode, let mode = OutboundMode(rawValue: raw) else {
+                completionHandler?(try? TunnelIPC.encode(.failure("setOutboundMode missing mode")))
+                return
+            }
+            engine?.setOutboundMode(mode, globalGroup: request.groupName)
+            OutboundModeStore.save(mode: mode, globalGroup: request.groupName)
+            completionHandler?(try? TunnelIPC.encode(.success()))
+        case .setCaptureMode:
+            let fakeIP = request.fakeIP ?? self.useFakeIP
+            let proxy = request.systemProxy ?? self.systemProxy
+            let lan = request.allowLAN ?? self.allowLAN
+            self.useFakeIP = fakeIP
+            self.systemProxy = proxy
+            self.allowLAN = lan
+            Task { [weak self] in
+                guard let self else {
+                    completionHandler?(try? TunnelIPC.encode(.failure("deallocated")))
+                    return
+                }
+                do {
+                    if let engine = self.engine {
+                        try await self.applyMixedPort(
+                            engine: engine,
+                            enabled: proxy,
+                            port: self.mixedPortNumber,
+                            allowLAN: lan
+                        )
+                    }
+                    let settings = Self.makeNetworkSettings(
+                        useFakeIP: fakeIP,
+                        systemProxy: proxy,
+                        mixedPort: self.mixedPortNumber,
+                        dnsServers: self.systemDNS,
+                        ipv6: self.ipv6FakeIP
+                    )
+                    try await self.setTunnelNetworkSettings(settings)
+                    TunnelLog.write(.info, "capture mode fakeIP=\(fakeIP) systemProxy=\(proxy)")
+                    completionHandler?(try? TunnelIPC.encode(.success()))
+                } catch {
+                    completionHandler?(try? TunnelIPC.encode(.failure(error.localizedDescription)))
+                }
+            }
+        case .clearFlows:
+            engine?.traffic.clearRecent()
+            completionHandler?(try? TunnelIPC.encode(.success()))
         }
     }
 
@@ -162,6 +237,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         relayTask?.cancel()
         pumpTask = nil
         relayTask = nil
+        mixedPort?.stop()
+        mixedPort = nil
         engine?.stopURLTest()
         engine = nil
         await stack?.stop()
@@ -186,9 +263,26 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     // MARK: - Virtual NIC
 
+    private func applyMixedPort(
+        engine: Engine,
+        enabled: Bool,
+        port: UInt16,
+        allowLAN: Bool
+    ) async throws {
+        mixedPort?.stop()
+        mixedPort = nil
+        guard enabled else { return }
+        let server = MixedPortServer(engine: engine, port: port, allowLAN: allowLAN)
+        try server.start()
+        mixedPort = server
+    }
+
     public static func makeNetworkSettings(
         useFakeIP: Bool,
-        dnsServers: [String]?
+        systemProxy: Bool = false,
+        mixedPort: UInt16 = MixedPortServer.defaultPort,
+        dnsServers: [String]?,
+        ipv6: Bool = false
     ) -> NEPacketTunnelNetworkSettings {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
         settings.mtu = 1400
@@ -201,26 +295,48 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 NEIPv4Route(destinationAddress: "198.18.0.0", subnetMask: "255.255.0.0")
             ]
         } else {
-            ipv4.includedRoutes = [NEIPv4Route.default()]
-            ipv4.excludedRoutes = [
-                NEIPv4Route(destinationAddress: "10.0.0.0", subnetMask: "255.0.0.0"),
-                NEIPv4Route(destinationAddress: "172.16.0.0", subnetMask: "255.240.0.0"),
-                NEIPv4Route(destinationAddress: "192.168.0.0", subnetMask: "255.255.0.0"),
-                NEIPv4Route(destinationAddress: "127.0.0.0", subnetMask: "255.0.0.0"),
-                NEIPv4Route(destinationAddress: "169.254.0.0", subnetMask: "255.255.0.0"),
-                NEIPv4Route(destinationAddress: "224.0.0.0", subnetMask: "240.0.0.0"),
-                NEIPv4Route(destinationAddress: "255.255.255.255", subnetMask: "255.255.255.255"),
+            // System Proxy only: keep utun addressed but route nothing into it.
+            ipv4.includedRoutes = [
+                NEIPv4Route(destinationAddress: "198.18.0.1", subnetMask: "255.255.255.255")
             ]
         }
         settings.ipv4Settings = ipv4
 
-        let resolvers = useFakeIP
-            ? ["198.18.0.2"]
-            : (dnsServers?.isEmpty == false ? dnsServers! : ["114.114.114.114"])
-        let dns = NEDNSSettings(servers: resolvers)
-        // Empty string match domain = hijack every DNS query into the tunnel.
-        dns.matchDomains = [""]
-        settings.dnsSettings = dns
+        if useFakeIP, ipv6 {
+            let ipv6Settings = NEIPv6Settings(
+                addresses: [FakeIPAllocator.gateway6.description],
+                networkPrefixLengths: [64]
+            )
+            ipv6Settings.includedRoutes = [
+                NEIPv6Route(
+                    destinationAddress: FakeIPAllocator.network6.description,
+                    networkPrefixLength: 64
+                )
+            ]
+            settings.ipv6Settings = ipv6Settings
+        }
+
+        if useFakeIP {
+            var resolvers = ["198.18.0.2"]
+            if ipv6 {
+                resolvers.append(FakeIPAllocator.dns6.description)
+            }
+            let dns = NEDNSSettings(servers: resolvers)
+            dns.matchDomains = [""]
+            settings.dnsSettings = dns
+        }
+
+        if systemProxy {
+            let proxy = NEProxySettings()
+            proxy.httpEnabled = true
+            proxy.httpsEnabled = true
+            let server = NEProxyServer(address: "127.0.0.1", port: Int(mixedPort))
+            proxy.httpServer = server
+            proxy.httpsServer = server
+            proxy.excludeSimpleHostnames = true
+            proxy.exceptionList = ["localhost", "127.0.0.1", "*.local"]
+            settings.proxySettings = proxy
+        }
         return settings
     }
 }
