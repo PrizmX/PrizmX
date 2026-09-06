@@ -276,11 +276,6 @@ final class AppModel {
         }
         installKeyMonitor()
         startTrafficIngest()
-        if !preview {
-            // Team-prefixed App Group replaces the legacy TCC-prompting one;
-            // app-side migration before the extension ever needs the data.
-            PrizmXAppGroup.migrateLegacyContainerIfNeeded()
-        }
         // Follow external VPN changes (System Settings toggle) so the app's
         // TUN switch never fights the real session state.
         if !preview {
