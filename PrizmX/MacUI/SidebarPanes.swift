@@ -59,7 +59,8 @@ struct LANPane: View {
 struct RulesPane: View {
     @Environment(AppModel.self) private var appModel
     @State private var search = ""
-    @State private var selectedRuleID: Int?
+    @State private var selectedRuleID: String?
+    @State private var editor: OverlayRule?
 
     var body: some View {
         let rows = displayRules
@@ -78,7 +79,7 @@ struct RulesPane: View {
             } else {
                 Table(rows, selection: $selectedRuleID) {
                     TableColumn("#") { (row: DisplayRule) in
-                        Text("\(row.id + 1)")
+                        Text("\(row.number)")
                             .foregroundStyle(.secondary)
                     }
                     .width(40)
@@ -93,23 +94,59 @@ struct RulesPane: View {
                     TableColumn("Policy") { row in
                         Text(row.policy)
                     }
-                    .width(140)
+                    .width(120)
+                    TableColumn("Source") { row in
+                        Text(row.isLocal ? "Local" : "Profile")
+                            .foregroundStyle(row.isLocal ? .primary : .secondary)
+                    }
+                    .width(80)
                 }
                 .tableStyle(.inset)
-                .contextMenu(forSelectionType: Int.self) { ids in
+                .contextMenu(forSelectionType: String.self) { ids in
                     if let id = ids.first, let row = rows.first(where: { $0.id == id }) {
-                        Button("Copy") {
-                            copyRule(row)
+                        Button("Copy") { copyRule(row) }
+                        if row.isLocal {
+                            Button("Edit…") { editor = overlayRule(id: row.overlayID) }
+                            Button("Delete", role: .destructive) { deleteLocal(id: row.overlayID) }
                         }
                     }
                 }
             }
         }
         .navigationTitle("Rules")
-        .searchable(text: $search, prompt: "Search rules")
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button("Add Rule", systemImage: "plus") {
+                    editor = OverlayRule(type: .domainSuffix, payload: "", policy: "DIRECT")
+                }
+                .disabled(appModel.dashboard.profiles.activeProfile == nil)
+                .help("Add a local rule in front of the profile rules.")
+                Button("Delete", systemImage: "minus") {
+                    deleteSelected()
+                }
+                .disabled(selectedLocalID == nil)
+            }
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+            ToolbarItem(placement: .primaryAction) {
+                ToolbarSearchField(text: $search, prompt: "Search rules")
+            }
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+            ToolbarItem(placement: .primaryAction) {
+                InspectorToolbarButton()
+            }
+        }
+        .sheet(item: $editor) { rule in
+            OverlayRuleEditor(
+                title: overlay.rules.contains(where: { $0.id == rule.id }) ? "Edit Rule" : "Add Rule",
+                policies: policyNames,
+                initial: rule
+            ) { saved in
+                upsertLocal(saved)
+            }
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             HStack {
-                Text("\(rows.count) rules")
+                Text("\(overlay.rules.count) local · \(rows.count) total")
                     .foregroundStyle(.secondary)
                 Spacer()
                 if let name = appModel.dashboard.profiles.activeProfileName {
@@ -123,13 +160,31 @@ struct RulesPane: View {
         }
     }
 
+    private var overlay: ProfileOverlay { appModel.dashboard.profiles.overlay }
+
+    private var selectedLocalID: UUID? {
+        displayRules.first { $0.id == selectedRuleID }?.overlayID
+    }
+
+    private var policyNames: [String] {
+        var names = ["DIRECT", "REJECT"]
+        names.append(contentsOf: appModel.nodeList.policyGroupSections.map(\.id))
+        var seen = Set<String>()
+        return names.filter { seen.insert($0).inserted }
+    }
+
     private var displayRules: [DisplayRule] {
+        let localIDs = overlay.rules.map(\.id)
         let rules = appModel.dashboard.profiles.rules.enumerated().map { index, rule in
-            DisplayRule(
-                id: index,
+            let isLocal = index < localIDs.count
+            return DisplayRule(
+                id: isLocal ? localIDs[index].uuidString : "profile-\(index)",
+                number: index + 1,
                 type: rule.displayType,
                 payload: rule.displayPayload,
-                policy: rule.displayPolicy
+                policy: rule.displayPolicy,
+                isLocal: isLocal,
+                overlayID: isLocal ? localIDs[index] : nil
             )
         }
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -139,6 +194,33 @@ struct RulesPane: View {
                 || row.payload.localizedCaseInsensitiveContains(query)
                 || row.policy.localizedCaseInsensitiveContains(query)
         }
+    }
+
+    private func overlayRule(id: UUID?) -> OverlayRule? {
+        guard let id else { return nil }
+        return overlay.rules.first { $0.id == id }
+    }
+
+    private func upsertLocal(_ rule: OverlayRule) {
+        var next = overlay
+        if let index = next.rules.firstIndex(where: { $0.id == rule.id }) {
+            next.rules[index] = rule
+        } else {
+            next.rules.append(rule)
+        }
+        appModel.saveOverlay(next)
+    }
+
+    private func deleteSelected() {
+        deleteLocal(id: selectedLocalID)
+    }
+
+    private func deleteLocal(id: UUID?) {
+        guard let id else { return }
+        var next = overlay
+        next.rules.removeAll { $0.id == id }
+        appModel.saveOverlay(next)
+        selectedRuleID = nil
     }
 
     private func copyRule(_ row: DisplayRule) {
@@ -151,10 +233,13 @@ struct RulesPane: View {
 }
 
 private struct DisplayRule: Identifiable {
-    var id: Int
+    var id: String
+    var number: Int
     var type: String
     var payload: String
     var policy: String
+    var isLocal: Bool
+    var overlayID: UUID?
 }
 
 struct ComingSoonPane: View {

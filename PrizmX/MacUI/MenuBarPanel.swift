@@ -213,15 +213,15 @@ struct MenuBarPanel: View {
             Divider()
 
             Button {
-                openMain(.more)
-                appModel.openMoreProfiles()
+                appModel.presentMain(using: openWindow, selecting: .more)
+                appModel.presentedMoreSheet = .profiles
             } label: {
                 LabeledContent("Profile", value: appModel.dashboard.activeProfileName)
             }
             .buttonStyle(.plain)
 
             Button {
-                appModel.presentNodePicker()
+                appModel.presentNodePicker(using: openWindow)
             } label: {
                 LabeledContent("Node", value: appModel.dashboard.activeNodeName)
             }
@@ -236,35 +236,17 @@ struct MenuBarPanel: View {
 
             Divider()
 
-            Button("Open Console…") { openMain(.home) }
-            Button("Inspector…") {
-                openWindow(id: AppWindowID.inspector)
-                NSApp.activate(ignoringOtherApps: true)
-                DockPolicy.apply(menuBarOnly: appModel.menuBarOnly)
-            }
+            Button("Open Console…") { appModel.presentMain(using: openWindow, selecting: .home) }
+            Button("Inspector…") { appModel.presentInspector(using: openWindow) }
             Button("Settings…") { openSettings() }
             Button("Quit PrizmX", role: .destructive) { appModel.quit() }
         }
         .padding(14)
         .frame(width: 320)
         .fixedSize(horizontal: true, vertical: true)
-        .sheet(isPresented: $appModel.isNodePickerPresented) {
-            NavigationStack {
-                NodeSelectPane(showsToolbar: true, showsDoneButton: true)
-            }
-            .environment(appModel)
-            .frame(width: 420, height: 520)
-        }
         .onChange(of: appModel.dashboard.status) { _, _ in
             appModel.refreshSessionClock()
         }
-    }
-
-    private func openMain(_ item: SidebarItem) {
-        appModel.selectedSidebarItem = item
-        openWindow(id: AppWindowID.main)
-        NSApp.activate(ignoringOtherApps: true)
-        DockPolicy.apply(menuBarOnly: appModel.menuBarOnly)
     }
 
     /// Transition feedback while the system applies the toggle.
@@ -303,8 +285,7 @@ private struct MenuBarShortcutBridge: View {
                 appModel.tunModeEnabled.toggle()
             }
             .onReceive(NotificationCenter.default.publisher(for: AppEvent.presentNodePicker)) { _ in
-                openWindow(id: AppWindowID.nodePicker)
-                NSApp.activate(ignoringOtherApps: true)
+                appModel.presentNodePicker(using: openWindow)
             }
     }
 }

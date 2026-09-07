@@ -10,59 +10,83 @@ struct HomePane: View {
     @Environment(\.openWindow) private var openWindow
     @State private var layout = HomeWidgetLayout()
     @State private var dropTarget: HomeWidgetID?
+    @State private var unit = WidgetGrid.minUnit
+    @State private var boardWidth = WidgetGrid.boardWidth(unit: WidgetGrid.minUnit)
+    @State private var widthSettleTask: Task<Void, Never>?
     @AppStorage("homeTrafficPeriod") private var trafficPeriodRaw = TrafficPeriod.day.rawValue
     @AppStorage("homeTrafficRankScope") private var rankScopeRaw = TrafficRankScope.app.rawValue
 
     var body: some View {
-        GeometryReader { geo in
-            let unit = WidgetGrid.unit(for: geo.size.width - 40)
-            let boardWidth = WidgetGrid.boardWidth(unit: unit)
-            let placed = layout.packed()
-            let rows = placed.map { $0.row + $0.size.rows }.max() ?? 0
+        let placed = layout.packed()
+        let rows = placed.map { $0.row + $0.size.rows }.max() ?? 0
 
-            VStack(alignment: .leading, spacing: WidgetGrid.spacing) {
-                headerFacts(unit: unit)
-                    .frame(width: boardWidth, alignment: .leading)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 20)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: WidgetGrid.spacing) {
-                        ZStack(alignment: .topLeading) {
-                            ForEach(placed) { item in
-                                placedCard(item, unit: unit)
-                            }
-                        }
-                        .environment(\.widgetUnit, unit)
-                        .frame(
-                            width: boardWidth,
-                            height: WidgetGrid.boardHeight(rows: rows, unit: unit),
-                            alignment: .topLeading
-                        )
-                        if let error = appModel.dashboard.lastError {
-                            InfoWidget(title: "Error", systemImage: "exclamationmark.triangle", size: .large) {
-                                Text(error)
-                                    .foregroundStyle(.red)
-                                    .textSelection(.enabled)
-                            }
-                            .environment(\.widgetUnit, unit)
+        VStack(alignment: .leading, spacing: WidgetGrid.spacing) {
+            headerFacts(unit: unit)
+                .frame(width: boardWidth, alignment: .leading)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 20)
+            ScrollView {
+                VStack(alignment: .leading, spacing: WidgetGrid.spacing) {
+                    ZStack(alignment: .topLeading) {
+                        ForEach(placed) { item in
+                            placedCard(item, unit: unit)
                         }
                     }
-                    .frame(width: boardWidth)
-                    .padding(.bottom, 20)
-                    .frame(maxWidth: .infinity)
+                    .environment(\.widgetUnit, unit)
+                    .frame(
+                        width: boardWidth,
+                        height: WidgetGrid.boardHeight(rows: rows, unit: unit),
+                        alignment: .topLeading
+                    )
+                    if let error = appModel.dashboard.lastError {
+                        InfoWidget(title: "Error", systemImage: "exclamationmark.triangle", size: .large) {
+                            Text(error)
+                                .foregroundStyle(.red)
+                                .textSelection(.enabled)
+                        }
+                        .environment(\.widgetUnit, unit)
+                    }
                 }
-                .scrollContentBackground(.hidden)
+                .frame(width: boardWidth)
+                .padding(.bottom, 20)
+                .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .background(WidgetChrome.page)
+            .scrollContentBackground(.hidden)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(WidgetChrome.page)
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            settleBoard(for: width)
+        }
         .navigationTitle("Home")
         .task {
             await appModel.refreshEgressIP()
         }
         .onChange(of: appModel.dashboard.status) {
             Task { await appModel.refreshEgressIP() }
+        }
+    }
+
+    /// Sidebar expand/collapse changes width every frame. Rebuilding the
+    /// widget grid on each tick is what hitchs the split animation.
+    private func settleBoard(for width: CGFloat) {
+        let nextUnit = WidgetGrid.unit(for: width - 40)
+        let nextBoard = WidgetGrid.boardWidth(unit: nextUnit)
+        if abs(nextUnit - unit) < 0.5 { return }
+        if widthSettleTask == nil, unit == WidgetGrid.minUnit {
+            unit = nextUnit
+            boardWidth = nextBoard
+            return
+        }
+        widthSettleTask?.cancel()
+        widthSettleTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(280))
+            guard !Task.isCancelled else { return }
+            unit = nextUnit
+            boardWidth = nextBoard
+            widthSettleTask = nil
         }
     }
 
@@ -194,7 +218,7 @@ struct HomePane: View {
             groupText: appModel.dashboard.profiles.activeProfile?.selectedGroupName ?? "—"
         ) {
             WidgetIconButton(systemImage: "chevron.right", help: "Select node (⌘K)") {
-                appModel.presentNodePicker()
+                appModel.presentNodePicker(using: openWindow)
             }
         }
     }
@@ -221,7 +245,7 @@ struct HomePane: View {
         let live = appModel.dashboard.vpn.activeConnections
         return ConnectionsCard(count: live) {
             Button {
-                openInspector()
+                appModel.presentInspector(using: openWindow)
             } label: {
                 Image(systemName: "circle.fill")
                     .font(.caption2)
@@ -288,10 +312,14 @@ struct HomePane: View {
 
     private func relativeUpdate(_ date: Date?) -> String {
         guard let date else { return "—" }
+        return Self.relativeFormatter.localizedString(for: date, relativeTo: .now)
+    }
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: .now)
-    }
+        return formatter
+    }()
 
     private var latencyParts: (value: String, unit: String) {
         if appModel.hasSelectedNodePing {
@@ -323,12 +351,6 @@ struct HomePane: View {
     private func pingSelected() async {
         guard let node = selectedNode else { return }
         await appModel.nodeList.ping(node)
-    }
-
-    private func openInspector() {
-        openWindow(id: AppWindowID.inspector)
-        NSApp.activate(ignoringOtherApps: true)
-        DockPolicy.apply(menuBarOnly: appModel.menuBarOnly)
     }
 }
 

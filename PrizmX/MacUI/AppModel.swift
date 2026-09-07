@@ -174,7 +174,6 @@ final class AppModel {
 
     var selectedSidebarItem: SidebarItem = .home
     var presentedMoreSheet: MoreSheet?
-    var isNodePickerPresented = false
     var sessionStartedAt: Date?
     var inspectorScope: InspectorScope = .recent
     var inspectorGrouping: InspectorGrouping = .app
@@ -389,6 +388,20 @@ final class AppModel {
         Task { await dashboard.vpn.clearFlows() }
     }
 
+    /// Persists the active profile overlay, rebuilds the in-app catalog, and
+    /// restarts a live tunnel so Packet Tunnel reads the merged rules.
+    func saveOverlay(_ overlay: ProfileOverlay) {
+        try? dashboard.profiles.saveOverlay(overlay)
+        Task { await reloadTunnelForOverlay() }
+    }
+
+    private func reloadTunnelForOverlay() async {
+        guard tunModeEnabled || systemProxyEnabled, isVPNOn else { return }
+        dashboard.vpn.stopVPN()
+        try? await Task.sleep(for: .milliseconds(400))
+        await applyCaptureMode()
+    }
+
     func toggleConnection() async {
         await dashboard.toggleConnection()
         refreshSessionClock()
@@ -407,13 +420,9 @@ final class AppModel {
             configText: config,
             fakeIP: tunModeEnabled,
             systemProxy: systemProxyEnabled,
-            allowLAN: allowLANEnabled
+            allowLAN: allowLANEnabled,
+            overlay: dashboard.profiles.overlay
         )
-    }
-
-    /// Starts/stops the NE tunnel so its state follows `tunModeEnabled`.
-    func applyTunMode() async {
-        await applyCaptureMode()
     }
 
     func refreshEgressIP() async {
@@ -445,15 +454,26 @@ final class AppModel {
 
     func select(_ node: OutboundNode) {
         dashboard.selectNode(node)
-        isNodePickerPresented = false
     }
 
-    func presentNodePicker() {
-        isNodePickerPresented = true
+    /// Focuses the standalone Inspector window, bringing the app forward.
+    func presentInspector(using openWindow: OpenWindowAction) {
+        openWindow(id: AppWindowID.inspector)
+        NSApp.activate(ignoringOtherApps: true)
+        DockPolicy.apply(menuBarOnly: menuBarOnly)
     }
 
-    func openMoreProfiles() {
-        presentedMoreSheet = .profiles
+    func presentNodePicker(using openWindow: OpenWindowAction) {
+        openWindow(id: AppWindowID.nodePicker)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Focuses the main console, optionally switching the sidebar selection.
+    func presentMain(using openWindow: OpenWindowAction, selecting item: SidebarItem? = nil) {
+        if let item { selectedSidebarItem = item }
+        openWindow(id: AppWindowID.main)
+        NSApp.activate(ignoringOtherApps: true)
+        DockPolicy.apply(menuBarOnly: menuBarOnly)
     }
 
     func quit() {

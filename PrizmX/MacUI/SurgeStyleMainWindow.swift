@@ -6,61 +6,32 @@ import PrizmXUIEngine
 /// Console: Home + Sources / Routing / Debug + More, Inspector pops out.
 struct SurgeStyleMainWindow: View {
     @Environment(AppModel.self) private var appModel
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         @Bindable var appModel = appModel
 
         NavigationSplitView {
-            List(selection: $appModel.selectedSidebarItem) {
-                sidebarRow(.home)
-
-                Section("Sources") {
-                    sidebarRow(.apps)
-                    sidebarRow(.lan)
-                }
-                Section("Routing") {
-                    sidebarRow(.policies)
-                    sidebarRow(.rules)
-                }
-                Section("Debug") {
-                    sidebarRow(.capture)
-                    sidebarRow(.decrypt)
-                    sidebarRow(.rewrite)
-                }
+            #if DEBUG
+            if UserDefaults.standard.bool(forKey: "PRIZMX_BARE_SIDEBAR") {
+                plainSidebar
+            } else {
+                fullSidebar
             }
-            .listStyle(.sidebar)
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                List(selection: $appModel.selectedSidebarItem) {
-                    sidebarRow(.more)
-                }
-                .listStyle(.sidebar)
-                .scrollDisabled(true)
-                .frame(height: 36)
-                .padding(.bottom, 12)
-            }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 208, max: 260)
+            #else
+            fullSidebar
+            #endif
         } detail: {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(nsColor: .windowBackgroundColor))
         }
-        .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 900, minHeight: 520)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button("Inspector", systemImage: "arrow.up.forward.app", action: openInspector)
-                    .labelStyle(.iconOnly)
-                    .help("Inspector")
+            if appModel.selectedSidebarItem != .rules && appModel.selectedSidebarItem != .policies {
+                ToolbarItem(placement: .primaryAction) {
+                    InspectorToolbarButton()
+                }
             }
-        }
-        .sheet(isPresented: $appModel.isNodePickerPresented) {
-            NavigationStack {
-                NodeSelectPane(showsToolbar: true, showsDoneButton: true)
-            }
-            .environment(appModel)
-            .frame(minWidth: 480, minHeight: 520)
         }
         .sheet(item: $appModel.presentedMoreSheet) { sheet in
             switch sheet {
@@ -82,8 +53,88 @@ struct SurgeStyleMainWindow: View {
         }
     }
 
+    // MARK: - Sidebar
+
+    private var fullSidebar: some View {
+        @Bindable var appModel = appModel
+        return List(selection: $appModel.selectedSidebarItem) {
+            sidebarRow(.home)
+
+            Section("Sources") {
+                sidebarRow(.apps)
+                sidebarRow(.lan)
+            }
+            Section("Routing") {
+                sidebarRow(.policies)
+                sidebarRow(.rules)
+            }
+            Section("Debug") {
+                sidebarRow(.capture)
+                sidebarRow(.decrypt)
+                sidebarRow(.rewrite)
+            }
+        }
+        .listStyle(.sidebar)
+        .safeAreaBar(edge: .bottom) {
+            moreBar
+        }
+        .navigationSplitViewColumnWidth(min: 180, ideal: 208, max: 260)
+    }
+
+    /// Debug bisection (`PRIZMX_BARE_SIDEBAR=1`): no selection, no More bar.
+    private var plainSidebar: some View {
+        List {
+            Text("Home")
+            Text("Policies")
+        }
+        .listStyle(.sidebar)
+        .navigationSplitViewColumnWidth(min: 180, ideal: 208, max: 260)
+    }
+
+    private func sidebarRow(_ item: SidebarItem) -> some View {
+        Label(item.title, systemImage: item.systemImage)
+            .tag(item)
+    }
+
+    private var moreBar: some View {
+        Button {
+            appModel.selectedSidebarItem = .more
+        } label: {
+            Label(SidebarItem.more.title, systemImage: SidebarItem.more.systemImage)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(appModel.selectedSidebarItem == .more ? Color.white : Color.primary)
+        .background {
+            if appModel.selectedSidebarItem == .more {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.accentColor)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 8)
+    }
+
+    // MARK: - Detail
+
     @ViewBuilder
     private var detail: some View {
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "PRIZMX_BARE_DETAIL") {
+            Color.clear
+        } else {
+            detailContent
+        }
+        #else
+        detailContent
+        #endif
+    }
+
+    @ViewBuilder
+    private var detailContent: some View {
         switch appModel.selectedSidebarItem {
         case .home:
             HomePane()
@@ -117,17 +168,6 @@ struct SurgeStyleMainWindow: View {
             MorePane()
         }
     }
-
-    private func sidebarRow(_ item: SidebarItem) -> some View {
-        Label(item.title, systemImage: item.systemImage)
-            .tag(item)
-    }
-
-    private func openInspector() {
-        openWindow(id: AppWindowID.inspector)
-        NSApp.activate(ignoringOtherApps: true)
-        DockPolicy.apply(menuBarOnly: appModel.menuBarOnly)
-    }
 }
 
 struct AppCommands: Commands {
@@ -149,22 +189,19 @@ struct AppCommands: Commands {
             .keyboardShortcut(".", modifiers: .command)
 
             Button("Select Node…") {
-                openWindow(id: AppWindowID.nodePicker)
-                NSApp.activate(ignoringOtherApps: true)
+                appModel.presentNodePicker(using: openWindow)
             }
             .keyboardShortcut("k", modifiers: .command)
         }
 
         CommandGroup(after: .windowList) {
             Button("Main Console") {
-                openWindow(id: AppWindowID.main)
-                NSApp.activate(ignoringOtherApps: true)
+                appModel.presentMain(using: openWindow)
             }
             .keyboardShortcut("0", modifiers: .command)
 
             Button("Inspector") {
-                openWindow(id: AppWindowID.inspector)
-                NSApp.activate(ignoringOtherApps: true)
+                appModel.presentInspector(using: openWindow)
             }
             .keyboardShortcut("i", modifiers: .command)
         }

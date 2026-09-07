@@ -6,7 +6,7 @@ import PrizmXServices
 /// Per-flow request data belongs to the Inspector, not this log.
 struct EventsSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var lines: [String] = []
+    @State private var lines: [String] = EventsSheet.readLines()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -42,19 +42,19 @@ struct EventsSheet: View {
                     scrollToLatest(proxy)
                 }
                 .onAppear {
-                    scrollToLatest(proxy)
+                    scrollToLatest(proxy, animated: false)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(nsColor: .controlBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 1)
             )
-
         }
         .padding(20)
-        .frame(minWidth: 640, minHeight: 440)
+        .frame(width: 640, height: 440)
         .background(Color(nsColor: .windowBackgroundColor))
         .safeAreaInset(edge: .bottom, spacing: 0) {
             SheetActionBar(onDone: { dismiss() }) {
@@ -66,7 +66,7 @@ struct EventsSheet: View {
                 .buttonStyle(.bordered)
                 Button("Clear") {
                     TunnelLog.clear()
-                    refresh()
+                    Task { await refresh() }
                 }
                 .buttonStyle(.bordered)
                 .disabled(lines.isEmpty)
@@ -74,22 +74,31 @@ struct EventsSheet: View {
             .background(Color(nsColor: .windowBackgroundColor))
         }
         .task {
-            refresh()
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
-                refresh()
+                await refresh()
             }
         }
     }
 
-    private func refresh() {
-        let text = TunnelLog.read()
-        lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    private static func readLines() -> [String] {
+        TunnelLog.read().split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
     }
 
-    private func scrollToLatest(_ proxy: ScrollViewProxy) {
+    /// `TunnelLog.read()` blocks on file I/O; keep it off the main actor.
+    private func refresh() async {
+        let next = await Task.detached(priority: .utility) { Self.readLines() }.value
+        guard next != lines else { return }
+        lines = next
+    }
+
+    private func scrollToLatest(_ proxy: ScrollViewProxy, animated: Bool = true) {
         guard let last = lines.indices.last else { return }
-        withAnimation(.easeOut(duration: 0.15)) {
+        if animated {
+            withAnimation(.easeOut(duration: 0.15)) {
+                proxy.scrollTo(last, anchor: .bottom)
+            }
+        } else {
             proxy.scrollTo(last, anchor: .bottom)
         }
     }

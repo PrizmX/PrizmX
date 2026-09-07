@@ -5,7 +5,7 @@ import PrizmXUIEngine
 /// Grouped node table with search, concurrent ping, and selection highlight.
 struct NodeSelectPane: View {
     @Environment(AppModel.self) private var appModel
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissWindow) private var dismissWindow
     var showsToolbar: Bool = true
     var showsDoneButton: Bool = false
 
@@ -25,8 +25,7 @@ struct NodeSelectPane: View {
             if showsDoneButton {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") {
-                        appModel.isNodePickerPresented = false
-                        dismiss()
+                        dismissWindow(id: AppWindowID.nodePicker)
                     }
                     .keyboardShortcut(.cancelAction)
                 }
@@ -88,7 +87,7 @@ struct NodeSelectPane: View {
                         TableRow(node)
                             .contextMenu {
                                 Button("Select") {
-                                    appModel.select(node)
+                                    selectAndClose(node)
                                 }
                                 Button("Ping") {
                                     Task { await appModel.nodeList.ping(node) }
@@ -108,9 +107,14 @@ struct NodeSelectPane: View {
                 guard let newValue,
                       let node = appModel.nodeList.filteredNodes.first(where: { $0.id == newValue })
                 else { return }
-                appModel.select(node)
+                selectAndClose(node)
             }
         )
+    }
+
+    private func selectAndClose(_ node: OutboundNode) {
+        appModel.select(node)
+        dismissWindow(id: AppWindowID.nodePicker)
     }
 
     private var emptyState: some View {
