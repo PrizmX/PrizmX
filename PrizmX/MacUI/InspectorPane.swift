@@ -18,8 +18,19 @@ struct InspectorPane: View {
             }
             .width(80)
             TableColumn("App") { item in
-                Text(item.appName)
+                HStack(spacing: 6) {
+                    if item.appName != "—" {
+                        AppIconView(
+                            bundleID: item.appBundleID,
+                            executablePath: item.appExecutablePath,
+                            size: 16
+                        )
+                    }
+                    Text(item.appName)
+                        .lineLimit(1)
+                }
             }
+            .width(min: 120, ideal: 160)
             TableColumn("Status") { item in
                 Text(item.status)
             }

@@ -519,6 +519,8 @@ struct InspectorRequest: Identifiable, Hashable, Sendable {
     var id: UUID
     var timestamp: Date
     var appName: String
+    var appBundleID: String?
+    var appExecutablePath: String?
     var status: String
     var policy: String
     var rule: String
@@ -532,7 +534,9 @@ struct InspectorRequest: Identifiable, Hashable, Sendable {
     init(flow: FlowRecord) {
         id = flow.id
         timestamp = flow.startedAt
-        appName = "—"
+        appName = flow.attribution?.processName ?? "—"
+        appBundleID = flow.attribution?.bundleID
+        appExecutablePath = flow.attribution?.executablePath
         status = flow.closed ? (flow.clientEnd.isEmpty ? "closed" : flow.clientEnd) : "active"
         policy = flow.via
         rule = flow.rule.isEmpty ? "—" : flow.rule

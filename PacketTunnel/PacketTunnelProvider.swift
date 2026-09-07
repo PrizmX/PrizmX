@@ -2,6 +2,7 @@ import Foundation
 import NetworkExtension
 import Darwin
 import os
+import PrizmXAttribution
 import PrizmXConfig
 import PrizmXCore
 import PrizmXProtocols
@@ -66,12 +67,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             "tunnel starting configBytes=\(boot.configText?.utf8.count ?? 0) fakeIP=\(useFakeIP) appDNS=\(systemDNS) pinned=\(pinPreview) selections=\(PolicySelectionStore.load())"
         )
 
-        let engine = try boot.makeEngine()
+        let attributor = ProcessFlowAttributor()
+        let engine = try boot.makeEngine(flowAttributor: attributor)
         self.ipv6FakeIP = engine.dns.settings.ipv6
         TunnelLog.write(
             .info,
             "engine ready rules=\(engine.router.rules.count) nodes=\(engine.nodeManager.nodesByID.count) groups=\(engine.nodeManager.groupsByName.count)"
         )
+        let attributionProbe = AttributionProbe.run(attributor: attributor)
+        TunnelLog.write(.info, attributionProbe.summary)
 
         // 2. Wire the packet emitter. `NEPacketTunnelFlow.writePackets` is
         //    thread-safe; the wrapper is `@unchecked Sendable` because the
@@ -83,6 +87,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             dns: engine.dns,
             dnsPolicy: { host in await engine.dnsPolicy(host: host) },
             ipv6: engine.dns.settings.ipv6,
+            flowAttributor: attributor,
             onOutput: { packets in
                 guard !packets.isEmpty else { return }
                 let protocols = packets.map { packet -> NSNumber in

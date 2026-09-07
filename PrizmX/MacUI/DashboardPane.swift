@@ -277,11 +277,7 @@ struct HomePane: View {
             hourly: appModel.trafficLedger.hourly(),
             emptyText: scope.emptyDescription,
             iconImage: { row in
-                guard let bundleID = row.bundleID,
-                      let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
-                    return nil
-                }
-                return Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                AppIcon.image(bundleID: row.bundleID, executablePath: nil)
             }
         ) {
             WidgetCapsulePicker(

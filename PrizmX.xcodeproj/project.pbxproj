@@ -14,6 +14,7 @@
 		5B6040F8303FEE1400F6C849 /* PrizmXConfig in Frameworks */ = {isa = PBXBuildFile; productRef = 5B6040F9303FEE1400F6C84A /* PrizmXConfig */; };
 		5B7A1104304B1001000A04 /* PrizmXUIEngine in Frameworks */ = {isa = PBXBuildFile; productRef = 5B7A1102304B1001000A02 /* PrizmXUIEngine */; };
 		5B7A1105304B1001000A05 /* PrizmXUIComponents in Frameworks */ = {isa = PBXBuildFile; productRef = 5B7A1103304B1001000A03 /* PrizmXUIComponents */; };
+		5BA11A01305C0101000C01 /* PrizmXAttribution in Frameworks */ = {isa = PBXBuildFile; productRef = 5BA11A02305C0101000C02 /* PrizmXAttribution */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -89,6 +90,7 @@
 				5B6040D1303FEE1400F6C720 /* PrizmXConfig in Frameworks */,
 				5B6040D3303FEE1400F6C722 /* PrizmXCore in Frameworks */,
 				5B6040C1303FEE1400F6C712 /* PrizmXTUN in Frameworks */,
+				5BA11A01305C0101000C01 /* PrizmXAttribution in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -163,6 +165,7 @@
 				5B6040BE303FEE1400F6C70F /* PrizmXTUN */,
 				5B6040D2303FEE1400F6C721 /* PrizmXConfig */,
 				5B6040D4303FEE1400F6C723 /* PrizmXCore */,
+				5BA11A02305C0101000C02 /* PrizmXAttribution */,
 			);
 			productName = PacketTunnel;
 			productReference = 5B6040B0303FEE1400F6C701 /* PacketTunnel.appex */;
@@ -572,6 +575,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 5B7A1101304B1001000A01 /* XCLocalSwiftPackageReference "../PrizmX-Kit" */;
 			productName = PrizmXUIComponents;
+		};
+		5BA11A02305C0101000C02 /* PrizmXAttribution */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5B6040BD303FEE1400F6C70E /* XCLocalSwiftPackageReference "../PrizmX-Foundation" */;
+			productName = PrizmXAttribution;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
