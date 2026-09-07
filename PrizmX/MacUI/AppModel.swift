@@ -171,6 +171,7 @@ final class AppModel {
     let dashboard: DashboardViewModel
     let nodeList: NodeListViewModel
     let trafficLedger: TrafficLedger
+    private let mixedPortRuntime = SystemProxyRuntime()
 
     var selectedSidebarItem: SidebarItem = .home
     var presentedMoreSheet: MoreSheet?
@@ -201,22 +202,25 @@ final class AppModel {
 
     var systemProxyEnabled: Bool {
         didSet {
+            guard systemProxyEnabled != oldValue else { return }
             UserDefaults.standard.set(systemProxyEnabled, forKey: DefaultsKey.systemProxyEnabled)
-            Task { await applyCaptureMode() }
+            scheduleCaptureMode()
         }
     }
 
     var tunModeEnabled: Bool {
         didSet {
+            guard tunModeEnabled != oldValue else { return }
             UserDefaults.standard.set(tunModeEnabled, forKey: DefaultsKey.tunModeEnabled)
-            Task { await applyCaptureMode() }
+            scheduleCaptureMode()
         }
     }
 
     var allowLANEnabled: Bool {
         didSet {
+            guard allowLANEnabled != oldValue else { return }
             UserDefaults.standard.set(allowLANEnabled, forKey: DefaultsKey.allowLANEnabled)
-            Task { await applyCaptureMode() }
+            scheduleCaptureMode()
         }
     }
 
@@ -237,6 +241,10 @@ final class AppModel {
     nonisolated(unsafe) private var keyMonitor: Any?
     @ObservationIgnored
     nonisolated(unsafe) private var trafficIngestTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var captureModeTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var terminateObserver: NSObjectProtocol?
 
     init(preview: Bool = false) {
         if preview {
@@ -293,6 +301,13 @@ final class AppModel {
         }
         installKeyMonitor()
         startTrafficIngest()
+        terminateObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.mixedPortRuntime.shutdown()
+        }
         // Follow external VPN changes (System Settings toggle) so the app's
         // TUN switch never fights the real session state.
         if !preview {
@@ -319,12 +334,19 @@ final class AppModel {
 
     func applyLaunchPolicy() {
         DockPolicy.apply(menuBarOnly: menuBarOnly)
+        if !systemProxyEnabled {
+            mixedPortRuntime.shutdown()
+        }
     }
 
     deinit {
         trafficIngestTask?.cancel()
+        captureModeTask?.cancel()
         if let keyMonitor {
             NSEvent.removeMonitor(keyMonitor)
+        }
+        if let terminateObserver {
+            NotificationCenter.default.removeObserver(terminateObserver)
         }
     }
 
@@ -396,9 +418,12 @@ final class AppModel {
     }
 
     private func reloadTunnelForOverlay() async {
-        guard tunModeEnabled || systemProxyEnabled, isVPNOn else { return }
-        dashboard.vpn.stopVPN()
-        try? await Task.sleep(for: .milliseconds(400))
+        guard tunModeEnabled || systemProxyEnabled else { return }
+        mixedPortRuntime.invalidate()
+        if isVPNOn {
+            dashboard.vpn.stopVPN()
+            try? await Task.sleep(for: .milliseconds(400))
+        }
         await applyCaptureMode()
     }
 
@@ -408,21 +433,45 @@ final class AppModel {
         await refreshEgressIP()
     }
 
-    /// Starts/stops the NE tunnel so its state follows TUN and System Proxy.
-    func applyCaptureMode() async {
-        let wantSession = tunModeEnabled || systemProxyEnabled
-        if !wantSession {
-            if isVPNOn { dashboard.vpn.stopVPN() }
-            return
+    /// Coalesce rapid TUN / System Proxy / Allow LAN flips onto the last state
+    /// so apply+restore cannot race and re-prompt.
+    private func scheduleCaptureMode() {
+        captureModeTask?.cancel()
+        captureModeTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            await applyCaptureMode()
         }
+    }
+
+    /// TUN → Packet Tunnel (FakeIP). System Proxy → mixed-port in this process.
+    func applyCaptureMode() async {
         let config = dashboard.profiles.activeProfile?.rawConfig ?? VPNManager.defaultDirectConfig
-        try? await dashboard.vpn.startVPN(
-            configText: config,
-            fakeIP: tunModeEnabled,
-            systemProxy: systemProxyEnabled,
-            allowLAN: allowLANEnabled,
-            overlay: dashboard.profiles.overlay
-        )
+        let overlay = dashboard.profiles.overlay
+        if tunModeEnabled {
+            try? await dashboard.vpn.startVPN(
+                configText: config,
+                fakeIP: true,
+                systemProxy: false,
+                allowLAN: allowLANEnabled,
+                overlay: overlay
+            )
+        } else if isVPNOn {
+            dashboard.vpn.stopVPN()
+        }
+        if systemProxyEnabled {
+            do {
+                try await mixedPortRuntime.apply(
+                    configText: config,
+                    overlay: overlay,
+                    allowLAN: allowLANEnabled
+                )
+            } catch {
+                TunnelLog.write(.error, "system proxy mixed-port failed: \(error.localizedDescription)")
+            }
+        } else {
+            mixedPortRuntime.shutdown()
+        }
     }
 
     func refreshEgressIP() async {
@@ -477,6 +526,7 @@ final class AppModel {
     }
 
     func quit() {
+        mixedPortRuntime.shutdown()
         NSApplication.shared.terminate(nil)
     }
 

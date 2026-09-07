@@ -207,8 +207,7 @@ struct MenuBarPanel: View {
             Toggle("System Proxy", isOn: $appModel.systemProxyEnabled)
                 .toggleStyle(.switch)
                 .controlSize(.small)
-                .disabled(true)
-                .help("Coming soon")
+                .help("HTTP, HTTPS, and SOCKS via mixed-port")
 
             Divider()
 

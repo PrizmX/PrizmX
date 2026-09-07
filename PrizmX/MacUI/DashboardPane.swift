@@ -141,8 +141,7 @@ struct HomePane: View {
             TakeoverCard(
                 headline: takeoverHeadline,
                 proxyIsOn: $model.systemProxyEnabled,
-                tunIsOn: $model.tunModeEnabled,
-                systemProxyAvailable: true
+                tunIsOn: $model.tunModeEnabled
             )
         case .subscription: profileWidget
         case .node: nodeWidget
