@@ -119,7 +119,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         // inside the Packet Tunnel requires a dummy VPN that steals the
         // default route when TUN is off.
 
-        // 3. Virtual NIC: FakeIP 198.18.0.0/16 only (Direct uses kernel).
+        // 3. Virtual NIC: FakeIP 198.18.0.0/16 only. DIRECT FakeIP flows
+        // splice to real IPs in userspace (those IPs are not in this CIDR).
         let settings = Self.makeNetworkSettings(
             useFakeIP: useFakeIP,
             dnsServers: systemDNS,
@@ -248,8 +249,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         settings.mtu = 1400
 
         if useFakeIP {
-            // Clash-style: only FakeIP CIDR enters the TUN. Direct names get
-            // real A records and leave via the kernel NIC.
+            // Surge-style FakeIP capture: only 198.18.0.0/16 enters the TUN.
+            // DIRECT is spliced to a real IP in userspace — not in this CIDR —
+            // so it leaves via the kernel NIC without hairpin.
             let ipv4 = NEIPv4Settings(addresses: ["198.18.0.1"], subnetMasks: ["255.255.0.0"])
             ipv4.includedRoutes = [
                 NEIPv4Route(destinationAddress: "198.18.0.0", subnetMask: "255.255.0.0")

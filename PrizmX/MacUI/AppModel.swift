@@ -449,13 +449,18 @@ final class AppModel {
         let config = dashboard.profiles.activeProfile?.rawConfig ?? VPNManager.defaultDirectConfig
         let overlay = dashboard.profiles.overlay
         if tunModeEnabled {
-            try? await dashboard.vpn.startVPN(
-                configText: config,
-                fakeIP: true,
-                systemProxy: false,
-                allowLAN: allowLANEnabled,
-                overlay: overlay
-            )
+            do {
+                try await dashboard.vpn.startVPN(
+                    configText: config,
+                    fakeIP: true,
+                    systemProxy: false,
+                    allowLAN: allowLANEnabled,
+                    overlay: overlay
+                )
+            } catch {
+                TunnelLog.write(.error, "TUN start failed: \(error.localizedDescription)")
+                tunModeEnabled = false
+            }
         } else if isVPNOn {
             dashboard.vpn.stopVPN()
         }

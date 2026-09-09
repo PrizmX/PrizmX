@@ -384,7 +384,8 @@ private struct SettingsForm: View {
                 Toggle("HTTP Capture", isOn: $appModel.httpCaptureEnabled)
                     .help("Menu bar uses the capture tint when the proxy is also on. Tunnel wiring comes later.")
                 Text(
-                    "TUN captures all traffic via FakeIP. System Proxy listens on mixed-port 7890 "
+                    "TUN captures domain traffic via FakeIP (198.18/16); DIRECT is spliced "
+                        + "to the real IP in userspace. System Proxy listens on mixed-port 7890 "
                         + "(HTTP CONNECT and SOCKS5) and sets the macOS HTTP/HTTPS proxy. "
                         + "Allow LAN binds that port on all interfaces."
                 )
