@@ -44,6 +44,8 @@ jobs:
         ${{ secrets.APPLE_PROVISION_TUNNEL_BASE64 }}
       KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
       SKIP_FINDER_LAYOUT: "true"
+      # Monotonic CFBundleVersion; local builds still fall back to commit count.
+      BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - name: Checkout app
         uses: actions/checkout@v4
