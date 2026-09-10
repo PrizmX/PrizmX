@@ -11,6 +11,10 @@ import PrizmXTUN
 /// Packet-tunnel entry point. The system instantiates this class when the
 /// main app calls `NETunnelProviderManager.connection.startVPNTunnel()`.
 final class PacketTunnelProvider: NEPacketTunnelProvider {
+    /// Conservative tunnel MTU: leaves headroom for PPPoE / DS-Lite / extra
+    /// encapsulation on the physical path.
+    private static let tunnelMTU: NSNumber = 1400
+
     private var stack: TUNStack?
     private var engine: Engine?
     private var pumpTask: Task<Void, Never>?
@@ -32,6 +36,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 return
             }
             do {
+                self.log.info("startTunnel begin")
                 try await self.bootstrap(options: options)
                 completionHandler(nil)
             } catch {
@@ -46,26 +51,49 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         // 1. Read Clash / sing-box text from the App Group file referenced
         //    by `configPath` in providerConfiguration.
         let proto = protocolConfiguration as? NETunnelProviderProtocol
+        var provider = proto?.providerConfiguration ?? [:]
+        if let options {
+            for (key, value) in options { provider[key] = value }
+        }
+        if let root = provider[TunnelProviderKeys.containerPath] as? String {
+            TunnelLog.bind(kitRoot: URL(fileURLWithPath: root))
+            log.info("bound kitRoot=\(root, privacy: .public)")
+        } else {
+            log.error("containerPath missing")
+        }
         let boot = ExtensionBootstrap(
-            providerConfiguration: proto?.providerConfiguration,
-            options: options?.mapValues { $0 }
+            providerConfiguration: provider,
+            options: nil
         )
         let useFakeIP = boot.useFakeIP
         let systemDNS = boot.systemDNS
         self.useFakeIP = useFakeIP
         self.systemDNS = systemDNS
         let pinPreview = boot.pinnedNodeAddresses.map { "\($0.key)→\($0.value.map(\.description))" }.sorted().joined(separator: ",")
+        let configBytes = boot.configText?.utf8.count ?? 0
+        let kitRoot = TunnelLog.kitRoot?.path ?? "-"
+        log.info("tunnel starting configBytes=\(configBytes) fakeIP=\(useFakeIP, privacy: .public)")
         TunnelLog.write(
             .info,
-            "tunnel starting configBytes=\(boot.configText?.utf8.count ?? 0) fakeIP=\(useFakeIP) appDNS=\(systemDNS) pinned=\(pinPreview) selections=\(PolicySelectionStore.load())"
+            "tunnel starting configBytes=\(configBytes) fakeIP=\(useFakeIP) appDNS=\(systemDNS)"
         )
+        TunnelLog.write(
+            .info,
+            "tunnel pins=\(pinPreview) selections=\(PolicySelectionStore.load()) kitRoot=\(kitRoot)"
+        )
+        if boot.configText == nil {
+            log.error("config missing — outbound will be DIRECT-only")
+            TunnelLog.write(.error, "config missing — extension cannot read staged kit; outbound will be DIRECT-only")
+        }
 
         let attributor = ProcessFlowAttributor()
         let engine = try boot.makeEngine(flowAttributor: attributor)
         self.ipv6FakeIP = engine.dns.settings.ipv6
+        let nodeCount = engine.nodeManager.nodesByID.count
+        log.info("engine ready rules=\(engine.router.rules.count) nodes=\(nodeCount)")
         TunnelLog.write(
             .info,
-            "engine ready rules=\(engine.router.rules.count) nodes=\(engine.nodeManager.nodesByID.count) groups=\(engine.nodeManager.groupsByName.count)"
+            "engine ready rules=\(engine.router.rules.count) nodes=\(nodeCount) groups=\(engine.nodeManager.groupsByName.count)"
         )
         let attributionProbe = AttributionProbe.run(attributor: attributor)
         TunnelLog.write(.info, attributionProbe.summary)
@@ -126,7 +154,19 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             dnsServers: systemDNS,
             ipv6: engine.dns.settings.ipv6
         )
-        try await setTunnelNetworkSettings(settings)
+        do {
+            try await setTunnelNetworkSettings(settings)
+        } catch {
+            // Roll back the already-started stack/relay; NE keeps the process
+            // alive after a failed start, so leaking them would leave a
+            // running engine with no virtual NIC.
+            relayTask?.cancel()
+            relayTask = nil
+            await stack.stop()
+            self.stack = nil
+            self.engine = nil
+            throw error
+        }
 
         // 4. Pump TUN packets into SwiftTCP.
         pumpTask = Task { [weak self] in
@@ -246,7 +286,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         ipv6: Bool = false
     ) -> NEPacketTunnelNetworkSettings {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
-        settings.mtu = 1400
+        settings.mtu = Self.tunnelMTU
 
         if useFakeIP {
             // Surge-style FakeIP capture: only 198.18.0.0/16 enters the TUN.
@@ -261,8 +301,16 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             // System Proxy only: keep the extension alive with a /32 address
             // and no included routes. A /16 address here is on-link and steals
             // 198.18.0.0/16 (and on some macOS builds the default route).
-            let ipv4 = NEIPv4Settings(addresses: ["198.18.0.1"], subnetMasks: ["255.255.255.255"])
-            ipv4.includedRoutes = []
+            let ipv4 = NEIPv4Settings(
+                addresses: ["198.18.0.1"],
+                subnetMasks: ["255.255.255.255"]
+            )
+            ipv4.includedRoutes = [
+                NEIPv4Route(
+                    destinationAddress: "198.18.0.1",
+                    subnetMask: "255.255.255.255"
+                )
+            ]
             settings.ipv4Settings = ipv4
         }
 

@@ -6,8 +6,6 @@
 	<array>
 		<string>packet-tunnel-provider-systemextension</string>
 	</array>
-	<key>com.apple.security.app-sandbox</key>
-	<true/>
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>N49M3Z72D3.group.app.prizmx</string>

@@ -57,7 +57,8 @@ final class HomeWidgetLayout {
         guard let from = order.firstIndex(of: dragged),
               let to = order.firstIndex(of: target) else { return }
         let item = order.remove(at: from)
-        order.insert(item, at: to)
+        // After removal the target shifts left by one when dragging forward.
+        order.insert(item, at: from < to ? to - 1 : to)
     }
 
     func packed(columns: Int = WidgetGrid.columns) -> [PlacedWidget] {

@@ -325,8 +325,11 @@ struct ProfilesSheet: View {
         let panel = NSSavePanel()
         panel.canCreateDirectories = true
         panel.title = "Export Profile"
-        panel.nameFieldStringValue = "\(profile.name).yaml"
-        panel.allowedContentTypes = [.yaml, .plainText]
+        // Match the extension to the actual format: exporting a sing-box
+        // profile as ".yaml" misleads both users and other tools.
+        let isSingbox = profile.format == .singbox
+        panel.nameFieldStringValue = "\(profile.name).\(isSingbox ? "json" : "yaml")"
+        panel.allowedContentTypes = isSingbox ? [.json] : [.yaml, .plainText]
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             try profile.rawConfig.write(to: url, atomically: true, encoding: .utf8)
@@ -345,8 +348,13 @@ struct ProfilesSheet: View {
         defer { isImportingURL = false }
         do {
             var request = URLRequest(url: url, timeoutInterval: 30)
-            request.setValue("PrizmX/1.0", forHTTPHeaderField: "User-Agent")
-            let (data, _) = try await URLSession.shared.data(for: request)
+            let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+            request.setValue("PrizmX/\(version)", forHTTPHeaderField: "User-Agent")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                errorMessage = "Subscription download failed (HTTP \(http.statusCode))."
+                return
+            }
             guard let text = ProfileStore.decodeSubscriptionBody(data), !text.isEmpty else {
                 errorMessage = "The download did not contain a readable profile."
                 return

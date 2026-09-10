@@ -226,6 +226,7 @@ final class AppModel {
 
     var httpCaptureEnabled: Bool {
         didSet {
+            guard httpCaptureEnabled != oldValue else { return }
             UserDefaults.standard.set(httpCaptureEnabled, forKey: DefaultsKey.httpCaptureEnabled)
         }
     }
@@ -242,9 +243,9 @@ final class AppModel {
     @ObservationIgnored
     nonisolated(unsafe) private var trafficIngestTask: Task<Void, Never>?
     @ObservationIgnored
-    private var captureModeTask: Task<Void, Never>?
+    nonisolated(unsafe) private var captureModeTask: Task<Void, Never>?
     @ObservationIgnored
-    private var terminateObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var terminateObserver: NSObjectProtocol?
 
     init(preview: Bool = false) {
         if preview {
@@ -299,8 +300,10 @@ final class AppModel {
             }
             trafficLedger = TrafficLedger()
         }
-        installKeyMonitor()
-        startTrafficIngest()
+        if !preview {
+            installKeyMonitor()
+            startTrafficIngest()
+        }
         terminateObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil,
@@ -413,7 +416,15 @@ final class AppModel {
     /// Persists the active profile overlay, rebuilds the in-app catalog, and
     /// restarts a live tunnel so Packet Tunnel reads the merged rules.
     func saveOverlay(_ overlay: ProfileOverlay) {
-        try? dashboard.profiles.saveOverlay(overlay)
+        do {
+            try dashboard.profiles.saveOverlay(overlay)
+        } catch {
+            // Surface persistence failures instead of silently losing rules
+            // on next launch.
+            TunnelLog.write(.error, "overlay save failed: \(error.localizedDescription)")
+            dashboard.profiles.recordError(error)
+            return
+        }
         Task { await reloadTunnelForOverlay() }
     }
 
@@ -451,6 +462,7 @@ final class AppModel {
         if tunModeEnabled {
             do {
                 try await TunnelSystemExtension.activate()
+                guard !Task.isCancelled, tunModeEnabled else { return }
                 try await dashboard.vpn.startVPN(
                     configText: config,
                     fakeIP: true,
@@ -458,11 +470,14 @@ final class AppModel {
                     allowLAN: allowLANEnabled,
                     overlay: overlay
                 )
+            } catch is CancellationError {
+                return
             } catch {
                 TunnelLog.write(.error, "TUN start failed: \(error.localizedDescription)")
                 tunModeEnabled = false
+                dashboard.vpn.stopVPN()
             }
-        } else if isVPNOn {
+        } else {
             dashboard.vpn.stopVPN()
         }
         if systemProxyEnabled {
@@ -480,8 +495,12 @@ final class AppModel {
         }
     }
 
+    /// Third-party egress-IP probe endpoint. Only queried on demand / after
+    /// connect — it reveals the real exit IP to this service.
+    private static let egressIPEndpoint = URL(string: "https://api.ipify.org")!
+
     func refreshEgressIP() async {
-        var request = URLRequest(url: URL(string: "https://api.ipify.org")!)
+        var request = URLRequest(url: Self.egressIPEndpoint)
         request.timeoutInterval = 8
         do {
             let (data, response) = try await URLSession.shared.data(for: request)

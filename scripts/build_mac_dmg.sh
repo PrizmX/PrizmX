@@ -1,7 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-# Open-core macOS DMG: signed + notarized, sandbox left on.
+# Open-core macOS DMG: signed + notarized.
+# The host app stays sandboxed. The Packet Tunnel system extension does not:
+# it runs as root and must read the user App Group (config, pins, logs).
 # Run from anywhere; script lives in the PrizmX app repo.
 #
 # Usage:
@@ -270,7 +272,8 @@ dump_profiles() {
 }
 
 # ============================================================
-# Build (sandbox stays on — do not pass ENABLE_APP_SANDBOX=NO)
+# Build. Do not pass ENABLE_APP_SANDBOX=NO — that would unsandbox the host app.
+# Packet Tunnel sandbox is off via its target / entitlements file.
 # ============================================================
 
 echo "▶ Archiving $APP_NAME $VERSION ($BUILD_NUMBER)…"
@@ -306,7 +309,6 @@ XCODEBUILD_ARGS=(
   CURRENT_PROJECT_VERSION="$BUILD_NUMBER"
   CODE_SIGNING_ALLOWED=NO
   CODE_SIGN_IDENTITY="-"
-  ENABLE_APP_SANDBOX=YES
   ENABLE_HARDENED_RUNTIME=YES
 )
 xcodebuild "${XCODEBUILD_ARGS[@]}" archive
@@ -353,9 +355,11 @@ if [ -d "$FRAMEWORKS_PATH" ]; then
   done < <(find "$FRAMEWORKS_PATH" \( -name "*.framework" -o -name "*.dylib" \) | sort)
 fi
 
-SYSEX_PATH="$APP_PATH/Contents/Library/SystemExtensions/PacketTunnel.systemextension"
+SYSEX_DIR="$APP_PATH/Contents/Library/SystemExtensions"
+SYSEX_PATH="$SYSEX_DIR/app.prizmx.macos.packet-tunnel.systemextension"
 if [ ! -d "$SYSEX_PATH" ]; then
-  echo "❌ PacketTunnel.systemextension missing at $SYSEX_PATH"
+  echo "❌ System extension missing at $SYSEX_PATH"
+  ls -la "$SYSEX_DIR" 2>/dev/null || true
   exit 1
 fi
 
@@ -373,8 +377,19 @@ sign_item "$APP_PATH" "$APP_ENTITLEMENTS"
 
 echo "▶ Verifying code signature…"
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-echo "▶ Entitlements (sandbox must stay true):"
-codesign -d --entitlements - "$APP_PATH" 2>/dev/null | grep -E "app-sandbox|networkextension" || true
+echo "▶ Entitlements (app sandboxed, tunnel not):"
+APP_ENTS="$(codesign -d --entitlements :- "$APP_PATH" 2>/dev/null || true)"
+TUN_ENTS="$(codesign -d --entitlements :- "$SYSEX_PATH" 2>/dev/null || true)"
+echo "$APP_ENTS" | grep -E "app-sandbox|networkextension" || true
+echo "$TUN_ENTS" | grep -E "app-sandbox|networkextension" || true
+echo "$APP_ENTS" | grep -q "app-sandbox" || {
+  echo "❌ Host app lost app-sandbox"
+  exit 1
+}
+if echo "$TUN_ENTS" | grep -q "app-sandbox"; then
+  echo "❌ Packet Tunnel must not be sandboxed (cannot read user App Group)"
+  exit 1
+fi
 
 # ============================================================
 # Notarize app

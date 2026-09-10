@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SystemExtensions
 import PrizmXProtocols
@@ -10,16 +11,48 @@ enum TunnelSystemExtension {
 
     @MainActor
     static func activate() async throws {
+        let path = Bundle.main.bundleURL.path
+        if !path.hasPrefix("/Applications/") {
+            throw TunnelSystemExtensionError.notInApplications(path)
+        }
         try await Activator.shared.activate()
+    }
+}
+
+enum TunnelSystemExtensionError: Error, LocalizedError {
+    case notInApplications(String)
+    case needsUserApproval
+
+    var errorDescription: String? {
+        switch self {
+        case .notInApplications:
+            "Move PrizmX to /Applications before enabling TUN. System extensions cannot load from a DMG or Downloads."
+        case .needsUserApproval:
+            "Enable PrizmX Tunnel in System Settings → General → Login Items & Extensions → Network Extensions, then turn TUN on again."
+        }
     }
 }
 
 @MainActor
 private final class Activator: NSObject, OSSystemExtensionRequestDelegate {
     static let shared = Activator()
+    private var inFlight: Task<Void, Error>?
     private var continuation: CheckedContinuation<Void, Error>?
 
     func activate() async throws {
+        if let inFlight {
+            try await inFlight.value
+            return
+        }
+        let task = Task { @MainActor in
+            try await self.submit()
+        }
+        inFlight = task
+        defer { inFlight = nil }
+        try await task.value
+    }
+
+    private func submit() async throws {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             self.continuation = cont
             let request = OSSystemExtensionRequest.activationRequest(
@@ -41,6 +74,12 @@ private final class Activator: NSObject, OSSystemExtensionRequestDelegate {
 
     func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
         TunnelLog.write(.info, "system extension waiting for user approval")
+        if let url = URL(
+            string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"
+        ) {
+            NSWorkspace.shared.open(url)
+        }
+        finish(throwing: TunnelSystemExtensionError.needsUserApproval)
     }
 
     func request(
@@ -48,13 +87,21 @@ private final class Activator: NSObject, OSSystemExtensionRequestDelegate {
         didFinishWithResult result: OSSystemExtensionRequest.Result
     ) {
         TunnelLog.write(.info, "system extension ready result=\(result.rawValue)")
-        continuation?.resume()
-        continuation = nil
+        finish()
     }
 
     func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
         TunnelLog.write(.error, "system extension failed: \(error.localizedDescription)")
-        continuation?.resume(throwing: error)
-        continuation = nil
+        finish(throwing: error)
+    }
+
+    private func finish(throwing error: Error? = nil) {
+        guard let continuation else { return }
+        self.continuation = nil
+        if let error {
+            continuation.resume(throwing: error)
+        } else {
+            continuation.resume()
+        }
     }
 }

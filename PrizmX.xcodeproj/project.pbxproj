@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		5B6040BA303FEE1400F6C70B /* PacketTunnel.systemextension in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = 5B6040B0303FEE1400F6C701 /* PacketTunnel.systemextension */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		5B6040BA303FEE1400F6C70B /* app.prizmx.macos.packet-tunnel.systemextension in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = 5B6040B0303FEE1400F6C701 /* app.prizmx.macos.packet-tunnel.systemextension */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		5B6040C1303FEE1400F6C712 /* PrizmXTUN in Frameworks */ = {isa = PBXBuildFile; productRef = 5B6040BE303FEE1400F6C70F /* PrizmXTUN */; };
 		5B6040D1303FEE1400F6C720 /* PrizmXConfig in Frameworks */ = {isa = PBXBuildFile; productRef = 5B6040D2303FEE1400F6C721 /* PrizmXConfig */; };
 		5B6040D3303FEE1400F6C722 /* PrizmXCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5B6040D4303FEE1400F6C723 /* PrizmXCore */; };
@@ -34,7 +34,7 @@
 			dstPath = "$(SYSTEM_EXTENSIONS_FOLDER_PATH)";
 			dstSubfolderSpec = 16;
 			files = (
-				5B6040BA303FEE1400F6C70B /* PacketTunnel.systemextension in Embed System Extensions */,
+				5B6040BA303FEE1400F6C70B /* app.prizmx.macos.packet-tunnel.systemextension in Embed System Extensions */,
 			);
 			name = "Embed System Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -43,7 +43,7 @@
 
 /* Begin PBXFileReference section */
 		5B60409A303FEE1300F6C632 /* PrizmX.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PrizmX.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		5B6040B0303FEE1400F6C701 /* PacketTunnel.systemextension */ = {isa = PBXFileReference; explicitFileType = "wrapper.system-extension"; includeInIndex = 0; path = PacketTunnel.systemextension; sourceTree = BUILT_PRODUCTS_DIR; };
+		5B6040B0303FEE1400F6C701 /* app.prizmx.macos.packet-tunnel.systemextension */ = {isa = PBXFileReference; explicitFileType = "wrapper.system-extension"; includeInIndex = 0; path = "app.prizmx.macos.packet-tunnel.systemextension"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -110,7 +110,7 @@
 			isa = PBXGroup;
 			children = (
 				5B60409A303FEE1300F6C632 /* PrizmX.app */,
-				5B6040B0303FEE1400F6C701 /* PacketTunnel.systemextension */,
+				5B6040B0303FEE1400F6C701 /* app.prizmx.macos.packet-tunnel.systemextension */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -168,7 +168,7 @@
 				5BA11A02305C0101000C02 /* PrizmXAttribution */,
 			);
 			productName = PacketTunnel;
-			productReference = 5B6040B0303FEE1400F6C701 /* PacketTunnel.systemextension */;
+			productReference = 5B6040B0303FEE1400F6C701 /* app.prizmx.macos.packet-tunnel.systemextension */;
 			productType = "com.apple.product-type.system-extension";
 		};
 /* End PBXNativeTarget section */
@@ -392,8 +392,8 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
-				INFOPLIST_KEY_NSSystemExtensionUsageDescription = "PrizmX uses a system extension to capture traffic in TUN mode.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSSystemExtensionUsageDescription = "PrizmX uses a system extension to capture traffic in TUN mode.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -429,8 +429,8 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
-				INFOPLIST_KEY_NSSystemExtensionUsageDescription = "PrizmX uses a system extension to capture traffic in TUN mode.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSSystemExtensionUsageDescription = "PrizmX uses a system extension to capture traffic in TUN mode.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -455,13 +455,13 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = PacketTunnel/PacketTunnel.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				PRODUCT_BUNDLE_PACKAGE_TYPE = SYSX;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = N49M3Z72D3;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = NO;
+				EXECUTABLE_NAME = PacketTunnel;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PacketTunnel/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "PrizmX Tunnel";
@@ -472,11 +472,9 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				OTHER_LDFLAGS = (
-					"-e",
-					_NSExtensionMain,
-				);
 				PRODUCT_BUNDLE_IDENTIFIER = "app.prizmx.macos.packet-tunnel";
+				PRODUCT_BUNDLE_PACKAGE_TYPE = SYSX;
+				PRODUCT_MODULE_NAME = PacketTunnel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE = "$(PRIZMX_TUNNEL_PROFILE_UUID)";
 				PROVISIONING_PROFILE_SPECIFIER = "$(PRIZMX_TUNNEL_PROFILE_SPECIFIER)";
@@ -484,6 +482,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
+				WRAPPER_NAME = "app.prizmx.macos.packet-tunnel.systemextension";
 			};
 			name = Debug;
 		};
@@ -492,13 +491,13 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = PacketTunnel/PacketTunnel.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				PRODUCT_BUNDLE_PACKAGE_TYPE = SYSX;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = N49M3Z72D3;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = NO;
+				EXECUTABLE_NAME = PacketTunnel;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PacketTunnel/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "PrizmX Tunnel";
@@ -509,11 +508,9 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				OTHER_LDFLAGS = (
-					"-e",
-					_NSExtensionMain,
-				);
 				PRODUCT_BUNDLE_IDENTIFIER = "app.prizmx.macos.packet-tunnel";
+				PRODUCT_BUNDLE_PACKAGE_TYPE = SYSX;
+				PRODUCT_MODULE_NAME = PacketTunnel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE = "$(PRIZMX_TUNNEL_PROFILE_UUID)";
 				PROVISIONING_PROFILE_SPECIFIER = "$(PRIZMX_TUNNEL_PROFILE_SPECIFIER)";
@@ -521,6 +518,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
+				WRAPPER_NAME = "app.prizmx.macos.packet-tunnel.systemextension";
 			};
 			name = Release;
 		};

@@ -385,7 +385,7 @@ private struct SettingsForm: View {
                     .help("Menu bar uses the capture tint when the proxy is also on. Tunnel wiring comes later.")
                 Text(
                     "TUN captures domain traffic via FakeIP (198.18/16); DIRECT is spliced "
-                        + "to the real IP in userspace. System Proxy listens on mixed-port 7890 "
+                        + "to the real IP in userspace. System Proxy listens on mixed-port \(TunnelProviderKeys.defaultMixedPort) "
                         + "(HTTP CONNECT and SOCKS5) and sets the macOS HTTP/HTTPS proxy. "
                         + "Allow LAN binds that port on all interfaces."
                 )

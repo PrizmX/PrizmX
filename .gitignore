@@ -65,3 +65,6 @@ fastlane/test_output
 build/
 
 .DS_Store
+
+# Local notarization credentials and cert material. Never commit.
+scripts/dmg.env

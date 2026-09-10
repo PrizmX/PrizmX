@@ -129,10 +129,7 @@ struct NodeSelectPane: View {
     }
 
     private func latencyLabel(_ milliseconds: Double?) -> String {
-        guard let milliseconds, milliseconds >= 0, milliseconds <= 2_000 else {
-            return "Timeout"
-        }
-        return "\(Int(milliseconds.rounded())) ms"
+        LatencyFormat.label(milliseconds)
     }
 }
 

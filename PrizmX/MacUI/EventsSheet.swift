@@ -6,7 +6,9 @@ import PrizmXServices
 /// Per-flow request data belongs to the Inspector, not this log.
 struct EventsSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var lines: [String] = EventsSheet.readLines()
+    // Populated by the first `refresh()` — reading the log synchronously here
+    // would block the main actor while the sheet opens.
+    @State private var lines: [String] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -74,6 +76,7 @@ struct EventsSheet: View {
             .background(Color(nsColor: .windowBackgroundColor))
         }
         .task {
+            await refresh()
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 await refresh()
@@ -81,7 +84,7 @@ struct EventsSheet: View {
         }
     }
 
-    private static func readLines() -> [String] {
+    private nonisolated static func readLines() -> [String] {
         TunnelLog.read().split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
     }
 

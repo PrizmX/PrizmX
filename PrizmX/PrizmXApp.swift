@@ -13,6 +13,8 @@ struct PrizmXApp: App {
         }
         .defaultSize(width: 980, height: 640)
         .defaultLaunchBehavior(appModel.menuBarOnly ? .suppressed : .presented)
+        // App-wide commands live on the main window scene only; attaching the
+        // same set to every scene would duplicate menu items.
         .commands {
             AppCommands(appModel: appModel)
         }
@@ -26,9 +28,6 @@ struct PrizmXApp: App {
         }
         .defaultSize(width: 520, height: 560)
         .defaultLaunchBehavior(.suppressed)
-        .commands {
-            AppCommands(appModel: appModel)
-        }
 
         Window("Inspector", id: AppWindowID.inspector) {
             InspectorPane()
@@ -37,9 +36,6 @@ struct PrizmXApp: App {
         }
         .defaultSize(width: 1100, height: 700)
         .defaultLaunchBehavior(.suppressed)
-        .commands {
-            AppCommands(appModel: appModel)
-        }
 
         MenuBarExtra {
             MenuBarPanel()
@@ -55,9 +51,6 @@ struct PrizmXApp: App {
             SettingsPane()
                 .environment(appModel)
                 .frame(minWidth: 420, minHeight: 360)
-        }
-        .commands {
-            AppCommands(appModel: appModel)
         }
     }
 }

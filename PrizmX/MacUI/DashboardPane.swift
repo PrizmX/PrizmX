@@ -317,13 +317,8 @@ struct HomePane: View {
     }()
 
     private var latencyParts: (value: String, unit: String) {
-        if appModel.hasSelectedNodePing {
-            if let milliseconds = appModel.selectedNodeLatency, milliseconds >= 0, milliseconds <= 2_000 {
-                return ("\(Int(milliseconds.rounded()))", "ms")
-            }
-            return ("Timeout", "")
-        }
-        return ("—", "")
+        guard appModel.hasSelectedNodePing else { return ("—", "") }
+        return LatencyFormat.parts(appModel.selectedNodeLatency)
     }
 
     private var latencyDisplay: String {
