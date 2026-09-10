@@ -13,7 +13,7 @@
 	<key>CFBundleName</key>
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
-	<string>XPC!</string>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
@@ -25,5 +25,15 @@
 		<key>NSExtensionPrincipalClass</key>
 		<string>$(PRODUCT_MODULE_NAME).PacketTunnelProvider</string>
 	</dict>
+	<key>NetworkExtension</key>
+	<dict>
+		<key>NEProviderClasses</key>
+		<dict>
+			<key>com.apple.networkextension.packet-tunnel</key>
+			<string>$(PRODUCT_MODULE_NAME).PacketTunnelProvider</string>
+		</dict>
+	</dict>
+	<key>NSSystemExtensionUsageDescription</key>
+	<string>PrizmX uses a system extension to capture traffic in TUN mode.</string>
 </dict>
 </plist>

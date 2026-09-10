@@ -450,6 +450,7 @@ final class AppModel {
         let overlay = dashboard.profiles.overlay
         if tunModeEnabled {
             do {
+                try await TunnelSystemExtension.activate()
                 try await dashboard.vpn.startVPN(
                     configText: config,
                     fakeIP: true,

@@ -1,0 +1,95 @@
+# Builds a signed, notarized macOS DMG when a version tag is pushed
+# (e.g. v1.0.0), then creates a GitHub Release and uploads the DMG.
+#
+# Required repository secrets:
+#   APPLE_CERTIFICATE_BASE64      Developer ID Application .p12 (base64)
+#   APPLE_CERTIFICATE_PASSWORD    .p12 export password
+#   APPLE_CERT_NAME               Developer ID Application identity
+#   APPLE_ID                      Apple ID email for notarization
+#   APPLE_TEAM_ID                 Apple Developer Team ID
+#   APPLE_APP_SPECIFIC_PASSWORD   App-specific password for notarytool
+#   APPLE_PROVISION_APP_BASE64    Developer ID profile (app)
+#   APPLE_PROVISION_TUNNEL_BASE64 Developer ID profile (tunnel)
+#
+# Optional:
+#   KEYCHAIN_PASSWORD             CI keychain password (random value is fine)
+
+name: Release macOS DMG
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-release:
+    runs-on: macos-latest
+    env:
+      APP_NAME: PrizmX
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      CERT_NAME: ${{ secrets.APPLE_CERT_NAME }}
+      APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_PROVISION_APP_BASE64: ${{ secrets.APPLE_PROVISION_APP_BASE64 }}
+      APPLE_PROVISION_TUNNEL_BASE64: >-
+        ${{ secrets.APPLE_PROVISION_TUNNEL_BASE64 }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      SKIP_FINDER_LAYOUT: "true"
+    steps:
+      - name: Checkout app
+        uses: actions/checkout@v4
+        with:
+          path: PrizmX
+          fetch-depth: 0
+
+      - name: Checkout PrizmX-Foundation
+        uses: actions/checkout@v4
+        with:
+          repository: PrizmX/PrizmX-Foundation
+          path: PrizmX-Foundation
+
+      - name: Checkout PrizmX-Kit
+        uses: actions/checkout@v4
+        with:
+          repository: PrizmX/PrizmX-Kit
+          path: PrizmX-Kit
+
+      - name: Checkout SwiftTCP
+        uses: actions/checkout@v4
+        with:
+          repository: PrizmX/SwiftTCP
+          path: SwiftTCP
+
+      - name: Resolve version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version $VERSION"
+
+      - name: Build, sign, and notarize DMG
+        id: build
+        run: |
+          chmod +x PrizmX/scripts/build_mac_dmg.sh
+          ./PrizmX/scripts/build_mac_dmg.sh \
+            "${{ steps.version.outputs.version }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: PrizmX ${{ steps.version.outputs.version }} (macOS)
+          generate_release_notes: true
+          files: |
+            ${{ steps.build.outputs.dmg_path }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
