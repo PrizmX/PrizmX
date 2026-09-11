@@ -15,6 +15,8 @@ struct HomePane: View {
     @State private var widthSettleTask: Task<Void, Never>?
     @AppStorage("homeTrafficPeriod") private var trafficPeriodRaw = TrafficPeriod.day.rawValue
     @AppStorage("homeTrafficRankScope") private var rankScopeRaw = TrafficRankScope.app.rawValue
+    @AppStorage("homeDidShowReorderTip") private var didShowReorderTip = false
+    @State private var showsEgressInfo = false
 
     var body: some View {
         let placed = layout.packed()
@@ -25,6 +27,11 @@ struct HomePane: View {
                 .frame(width: boardWidth, alignment: .leading)
                 .frame(maxWidth: .infinity)
                 .padding(.top, 20)
+            if !didShowReorderTip {
+                reorderTip
+                    .frame(width: boardWidth, alignment: .leading)
+                    .frame(maxWidth: .infinity)
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: WidgetGrid.spacing) {
                     ZStack(alignment: .topLeading) {
@@ -62,10 +69,18 @@ struct HomePane: View {
         }
         .navigationTitle("Home")
         .task {
-            await appModel.refreshEgressIP()
+            await appModel.refreshEgress()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(15 * 60))
+                guard !Task.isCancelled else { return }
+                await appModel.refreshEgress()
+            }
         }
+        // Node / mode / capture / network changes schedule a coalesced
+        // refresh in AppModel — no per-event onChange here (that raced the
+        // route change and double-queried).
         .onChange(of: appModel.dashboard.status) {
-            Task { await appModel.refreshEgressIP() }
+            appModel.scheduleEgressRefresh()
         }
     }
 
@@ -96,17 +111,17 @@ struct HomePane: View {
             .overlay {
                 if dropTarget == item.id {
                     WidgetChrome.shape
-                        .stroke(Color.accentColor, lineWidth: 2)
+                        .stroke(WidgetChrome.accent, lineWidth: 2)
                 }
             }
             .contentShape(Rectangle())
-            .help("Drag to reorder")
             .draggable(item.id.rawValue)
             .dropDestination(for: String.self) { items, _ in
                 guard let raw = items.first, let dragged = HomeWidgetID(rawValue: raw) else {
                     return false
                 }
                 layout.move(dragged, before: item.id)
+                didShowReorderTip = true
                 return true
             } isTargeted: { hovering in
                 dropTarget = hovering ? item.id : nil
@@ -119,16 +134,69 @@ struct HomePane: View {
 
     // MARK: - Facts header
 
+    private var reorderTip: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "hand.draw")
+            Text("Drag widgets to reorder.")
+            Spacer(minLength: 8)
+            Button {
+                didShowReorderTip = true
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.plain)
+            .help("Dismiss")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(WidgetChrome.fill, in: Capsule())
+    }
+
     private func headerFacts(unit: CGFloat) -> some View {
         HStack(alignment: .top, spacing: WidgetGrid.spacing) {
-            headerFact("Network", appModel.dashboard.status.rawValue.capitalized)
-                .frame(width: unit, alignment: .leading)
+            headerFact("Network") {
+                HStack(spacing: 6) {
+                    Image(systemName: appModel.networkLink.kind.systemImage)
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                    Text(appModel.networkLink.title)
+                        .font(.headline)
+                        .lineLimit(1)
+                }
+            }
+            .frame(width: unit, alignment: .leading)
             headerFact("Profile", appModel.dashboard.activeProfileName)
                 .frame(width: unit, alignment: .leading)
             headerFact("Mode", appModel.outboundMode.title)
                 .frame(width: unit, alignment: .leading)
-            headerFact("External IP", appModel.egressIP)
-                .frame(width: unit, alignment: .leading)
+            headerFact("External IP") {
+                Button {
+                    showsEgressInfo = true
+                } label: {
+                    HStack(spacing: 6) {
+                        if let flag = appModel.egressInfo?.flagEmoji {
+                            Text(flag)
+                                .font(.headline)
+                        }
+                        Text(appModel.egressIP)
+                            .font(.headline)
+                            .lineLimit(1)
+                        Image(systemName: "info.circle")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("IP details")
+                .popover(isPresented: $showsEgressInfo, arrowEdge: .bottom) {
+                    ExternalIPPopover()
+                        .environment(appModel)
+                }
+            }
+            .frame(width: unit, alignment: .leading)
         }
     }
 
@@ -228,7 +296,9 @@ struct HomePane: View {
         let parts = latencyParts
         return LatencyCard(
             value: parts.value,
-            unit: parts.unit
+            unit: parts.unit,
+            nodeText: appModel.dashboard.activeNodeName,
+            bestText: latencyBestText
         ) {
             WidgetIconButton(
                 systemImage: "arrow.clockwise",
@@ -242,7 +312,14 @@ struct HomePane: View {
 
     private var connectionsWidget: some View {
         let live = appModel.dashboard.vpn.activeConnections
-        return ConnectionsCard(count: live) {
+        let flows = appModel.dashboard.vpn.lastMetrics.activeFlows
+        let processes = Set(flows.compactMap { $0.attribution?.accountingKey })
+        let hosts = Set(flows.map(\.endpoint.host.description))
+        return ConnectionsCard(
+            count: live,
+            processesText: "\(processes.count)",
+            hostsText: "\(hosts.count)"
+        ) {
             Button {
                 appModel.presentInspector(using: openWindow)
             } label: {
@@ -277,12 +354,14 @@ struct HomePane: View {
             emptyText: scope.emptyDescription,
             iconImage: { row in
                 AppIcon.image(bundleID: row.bundleID, executablePath: nil)
+                    ?? AppIcon.image(bundleID: "com.apple.Terminal", executablePath: nil)
             }
         ) {
             WidgetCapsulePicker(
                 options: TrafficRankScope.allCases.map { ($0.rawValue, $0.title) },
                 selection: $rankScopeRaw,
-                compact: true
+                compact: true,
+                expands: true
             )
         }
     }
@@ -321,19 +400,34 @@ struct HomePane: View {
         return LatencyFormat.parts(appModel.selectedNodeLatency)
     }
 
+    private var latencyBestText: String {
+        let samples = appModel.nodeList.latencyByNodeID.values.compactMap { rtt -> Double? in
+            guard let rtt, !LatencyFormat.isTimeout(rtt) else { return nil }
+            return rtt
+        }
+        guard let best = samples.min() else { return "—" }
+        return LatencyFormat.label(best)
+    }
+
     private var latencyDisplay: String {
         let parts = latencyParts
         return parts.unit.isEmpty ? parts.value : "\(parts.value) \(parts.unit)"
     }
 
     private func headerFact(_ title: String, _ value: String) -> some View {
+        headerFact(title) {
+            Text(value)
+                .font(.headline)
+                .lineLimit(1)
+        }
+    }
+
+    private func headerFact<Content: View>(_ title: String, @ViewBuilder value: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title.uppercased())
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text(value)
-                .font(.headline)
-                .lineLimit(1)
+            value()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

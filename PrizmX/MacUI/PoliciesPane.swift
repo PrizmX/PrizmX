@@ -193,7 +193,7 @@ struct PoliciesPane: View {
         guard let groupID = selectedGroupID else { return }
         // Persists PolicySelectionStore, updates the in-app NodeManager, and
         // notifies the running tunnel over IPC.
-        appModel.dashboard.selectPolicyMember(member.id, inGroup: groupID)
+        appModel.selectPolicyMember(member.id, inGroup: groupID)
     }
 
     private var overlay: ProfileOverlay { appModel.dashboard.profiles.overlay }

@@ -25,10 +25,16 @@ enum TunnelSystemExtensionError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .notInApplications:
-            "Move PrizmX to /Applications before enabling TUN. System extensions cannot load from a DMG or Downloads."
+        case .notInApplications(let path):
+            if path.contains("/DerivedData/") {
+                return "This process is still the DerivedData build. Use the PrizmX scheme "
+                    + "(it installs to /Applications and launches that copy), quit any extra "
+                    + "PrizmX instance, then enable TUN again."
+            }
+            return "Move PrizmX to /Applications before enabling TUN. "
+                + "System extensions cannot load from a DMG, Downloads, or Xcode's build folder."
         case .needsUserApproval:
-            "Enable PrizmX Tunnel in System Settings → General → Login Items & Extensions → Network Extensions, then turn TUN on again."
+            return "Enable PrizmX Tunnel in System Settings → General → Login Items & Extensions → Network Extensions, then turn TUN on again."
         }
     }
 }

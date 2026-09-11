@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import NetworkExtension
 import Darwin
 import os
@@ -19,6 +20,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private var engine: Engine?
     private var pumpTask: Task<Void, Never>?
     private var relayTask: Task<Void, Never>?
+    private var pathMonitor: Network.NWPathMonitor?
+    private var pathRefreshTask: Task<Void, Never>?
+    private var lastPathFingerprint: String?
     private var useFakeIP = true
     private var systemDNS: [String] = []
     private var ipv6FakeIP = false
@@ -38,6 +42,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             do {
                 self.log.info("startTunnel begin")
                 try await self.bootstrap(options: options)
+                self.startPathMonitor()
                 completionHandler(nil)
             } catch {
                 TunnelLog.write(.error, "startTunnel failed: \(error.localizedDescription)")
@@ -98,50 +103,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         let attributionProbe = AttributionProbe.run(attributor: attributor)
         TunnelLog.write(.info, attributionProbe.summary)
 
-        // 2. Wire the packet emitter. `NEPacketTunnelFlow.writePackets` is
-        //    thread-safe; the wrapper is `@unchecked Sendable` because the
-        //    system type is not marked Sendable.
-        let flow = packetFlow
-        let stack = TUNStack(
-            fakeIP: useFakeIP ? FakeIPAllocator() : nil,
-            fakeIPFilter: engine.dns.settings.fakeIPFilter,
-            dns: engine.dns,
-            dnsPolicy: { host in await engine.dnsPolicy(host: host) },
-            ipv6: engine.dns.settings.ipv6,
-            flowAttributor: attributor,
-            onOutput: { packets in
-                guard !packets.isEmpty else { return }
-                let protocols = packets.map { packet -> NSNumber in
-                    if packet.first.map({ $0 >> 4 }) == 6 {
-                        return NSNumber(value: AF_INET6)
-                    }
-                    return NSNumber(value: AF_INET)
-                }
-                flow.writePackets(packets, withProtocols: protocols)
-            }
-        )
-        await stack.start()
-        self.stack = stack
-        self.engine = engine
-
-        // Accept SwiftTCP streams and splice each one through Engine
-        // (DIRECT / Shadowsocks / VLESS) with structured concurrency.
-        let engineRef = engine
-        engine.startURLTest()
-        relayTask = Task {
-            await withTaskGroup(of: Void.self) { group in
-                group.addTask {
-                    for await stream in await stack.tcpConnections() {
-                        Task {
-                            await EngineTCPRelay.pipe(stream: stream, engine: engineRef)
-                        }
-                    }
-                }
-                group.addTask {
-                    await TUNUDPRelay.run(stack: stack, engine: engineRef)
-                }
-            }
-        }
+        // 2. SwiftTCP stack wired to the engine; packet emitter + relays.
+        try await startStackAndRelays(engine: engine, attributor: attributor)
 
         // Mixed-port lives in the main app (SystemProxyRuntime). Hosting it
         // inside the Packet Tunnel requires a dummy VPN that steals the
@@ -162,7 +125,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             // running engine with no virtual NIC.
             relayTask?.cancel()
             relayTask = nil
-            await stack.stop()
+            await self.stack?.stop()
             self.stack = nil
             self.engine = nil
             throw error
@@ -251,7 +214,17 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
+    override func wake() {
+        Task { [weak self] in
+            await self?.refreshAfterPathChange(reason: "wake")
+        }
+    }
+
     private func shutdown() async {
+        pathMonitor?.cancel()
+        pathMonitor = nil
+        pathRefreshTask?.cancel()
+        pathRefreshTask = nil
         pumpTask?.cancel()
         relayTask?.cancel()
         pumpTask = nil
@@ -262,6 +235,66 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         stack = nil
         TunnelLog.write(.info, "tunnel stopped")
         log.info("tunnel stopped")
+    }
+
+    // MARK: - Physical path
+
+    /// FakeIP captures DNS at start. After a Wi-Fi / Ethernet / hotspot
+    /// switch the old LAN resolver is a blackhole until we rebase.
+    private func startPathMonitor() {
+        let monitor = Network.NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard let self else { return }
+            Task { await self.notePath(path) }
+        }
+        monitor.start(queue: .global(qos: .utility))
+        pathMonitor = monitor
+    }
+
+    private func notePath(_ path: Network.NWPath) async {
+        let fingerprint = Self.pathFingerprint(path)
+        if fingerprint == lastPathFingerprint { return }
+        let isFirst = lastPathFingerprint == nil
+        lastPathFingerprint = fingerprint
+        if isFirst { return }
+        pathRefreshTask?.cancel()
+        pathRefreshTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            await self?.refreshAfterPathChange(reason: "path \(fingerprint)")
+        }
+    }
+
+    private func refreshAfterPathChange(reason: String) async {
+        guard engine != nil else { return }
+        let captured = PhysicalDNSSnapshot.capture()
+        engine?.dns.applyPhysicalDNS(captured)
+        if !captured.isEmpty {
+            systemDNS = captured
+        }
+        TunnelLog.write(.info, "path refresh (\(reason)) dns=\(captured)")
+        log.info("path refresh (\(reason, privacy: .public)) dns=\(captured, privacy: .public)")
+        let settings = Self.makeNetworkSettings(
+            useFakeIP: useFakeIP,
+            dnsServers: systemDNS,
+            ipv6: ipv6FakeIP
+        )
+        do {
+            try await setTunnelNetworkSettings(settings)
+        } catch {
+            TunnelLog.write(.error, "path refresh settings: \(error.localizedDescription)")
+        }
+    }
+
+    /// Ignore utun so bringing the tunnel up is not itself a "network change".
+    private static func pathFingerprint(_ path: Network.NWPath) -> String {
+        let interfaces = path.availableInterfaces
+            .map(\.name)
+            .filter { !$0.hasPrefix("utun") && !$0.hasPrefix("ipsec") }
+            .sorted()
+            .joined(separator: ",")
+        let gateways = path.gateways.map { "\($0)" }.sorted().joined(separator: ",")
+        return "\(path.status)|exp=\(path.isExpensive)|if=\(interfaces)|gw=\(gateways)"
     }
 
     // MARK: - Packet pump
@@ -275,6 +308,56 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             guard let stack else { return }
             await stack.input(packets: packets)
+        }
+    }
+
+    /// Starts SwiftTCP on the virtual NIC and splices streams through Engine.
+    private func startStackAndRelays(
+        engine: Engine,
+        attributor: ProcessFlowAttributor
+    ) async throws {
+        // `NEPacketTunnelFlow.writePackets` is thread-safe; the wrapper is
+        // `@unchecked Sendable` because the system type is not Sendable.
+        let flow = packetFlow
+        let stack = TUNStack(
+            fakeIP: useFakeIP ? FakeIPAllocator() : nil,
+            fakeIPFilter: engine.dns.settings.fakeIPFilter,
+            dns: engine.dns,
+            dnsPolicy: { host in await engine.dnsPolicy(host: host) },
+            ipv6: engine.dns.settings.ipv6,
+            flowAttributor: attributor,
+            onOutput: { packets in
+                guard !packets.isEmpty else { return }
+                let protocols = packets.map { packet -> NSNumber in
+                    if packet.first.map({ $0 >> 4 }) == 6 {
+                        return NSNumber(value: AF_INET6)
+                    }
+                    return NSNumber(value: AF_INET)
+                }
+                flow.writePackets(packets, withProtocols: protocols)
+            }
+        )
+        await stack.start()
+        self.stack = stack
+        self.engine = engine
+
+        // Accept SwiftTCP streams and splice each one through Engine
+        // (DIRECT / Shadowsocks / VLESS) with structured concurrency.
+        let engineRef = engine
+        engine.startURLTest()
+        relayTask = Task {
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    for await stream in await stack.tcpConnections() {
+                        Task {
+                            await EngineTCPRelay.pipe(stream: stream, engine: engineRef)
+                        }
+                    }
+                }
+                group.addTask {
+                    await TUNUDPRelay.run(stack: stack, engine: engineRef)
+                }
+            }
         }
     }
 

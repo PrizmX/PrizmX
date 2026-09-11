@@ -171,6 +171,7 @@ final class AppModel {
     let dashboard: DashboardViewModel
     let nodeList: NodeListViewModel
     let trafficLedger: TrafficLedger
+    let networkLink = NetworkLinkMonitor()
     private let mixedPortRuntime = SystemProxyRuntime()
 
     var selectedSidebarItem: SidebarItem = .home
@@ -183,12 +184,15 @@ final class AppModel {
     var inspectorActiveFlows: [FlowRecord] = []
     var inspectorRecentFlows: [FlowRecord] = []
     var egressIP = "—"
+    var egressInfo: EgressIPInfo?
+    var egressLookupError: String?
 
     var outboundMode: OutboundMode {
         didSet {
             guard outboundMode != oldValue else { return }
             UserDefaults.standard.set(outboundMode.rawValue, forKey: DefaultsKey.outboundMode)
             persistOutboundMode()
+            scheduleEgressRefresh()
         }
     }
 
@@ -245,6 +249,8 @@ final class AppModel {
     @ObservationIgnored
     nonisolated(unsafe) private var captureModeTask: Task<Void, Never>?
     @ObservationIgnored
+    nonisolated(unsafe) var egressRefreshTask: Task<Void, Never>?
+    @ObservationIgnored
     nonisolated(unsafe) private var terminateObserver: NSObjectProtocol?
 
     init(preview: Bool = false) {
@@ -285,6 +291,8 @@ final class AppModel {
                 vpn: PrizmXServices.VPNManager.shared,
                 profiles: profiles
             )
+            let mixedPort = mixedPortRuntime
+            dashboard.vpn.localMetricsProvider = { mixedPort.metrics() }
             nodeList = NodeListViewModel(profiles: profiles)
             menuBarOnly = UserDefaults.standard.bool(forKey: DefaultsKey.menuBarOnly)
             systemProxyEnabled = UserDefaults.standard.bool(forKey: DefaultsKey.systemProxyEnabled)
@@ -303,6 +311,9 @@ final class AppModel {
         if !preview {
             installKeyMonitor()
             startTrafficIngest()
+            networkLink.onChange = { [weak self] in
+                self?.scheduleEgressRefresh()
+            }
         }
         terminateObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
@@ -333,6 +344,7 @@ final class AppModel {
     private func persistOutboundMode() {
         let group = dashboard.profiles.activeProfile?.selectedGroupName
         Task { await dashboard.vpn.notifyOutboundMode(outboundMode.rawValue, globalGroup: group) }
+        mixedPortRuntime.reloadSelections()
     }
 
     func applyLaunchPolicy() {
@@ -345,6 +357,7 @@ final class AppModel {
     deinit {
         trafficIngestTask?.cancel()
         captureModeTask?.cancel()
+        egressRefreshTask?.cancel()
         if let keyMonitor {
             NSEvent.removeMonitor(keyMonitor)
         }
@@ -410,6 +423,7 @@ final class AppModel {
     func clearInspector() {
         inspectorRecentFlows = []
         selectedInspectorRequestID = nil
+        mixedPortRuntime.clearFlows()
         Task { await dashboard.vpn.clearFlows() }
     }
 
@@ -441,7 +455,7 @@ final class AppModel {
     func toggleConnection() async {
         await dashboard.toggleConnection()
         refreshSessionClock()
-        await refreshEgressIP()
+        scheduleEgressRefresh()
     }
 
     /// Coalesce rapid TUN / System Proxy / Allow LAN flips onto the last state
@@ -474,6 +488,7 @@ final class AppModel {
                 return
             } catch {
                 TunnelLog.write(.error, "TUN start failed: \(error.localizedDescription)")
+                dashboard.vpn.reportHostError(error)
                 tunModeEnabled = false
                 dashboard.vpn.stopVPN()
             }
@@ -493,27 +508,7 @@ final class AppModel {
         } else {
             mixedPortRuntime.shutdown()
         }
-    }
-
-    /// Third-party egress-IP probe endpoint. Only queried on demand / after
-    /// connect — it reveals the real exit IP to this service.
-    private static let egressIPEndpoint = URL(string: "https://api.ipify.org")!
-
-    func refreshEgressIP() async {
-        var request = URLRequest(url: Self.egressIPEndpoint)
-        request.timeoutInterval = 8
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                egressIP = "—"
-                return
-            }
-            let text = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            egressIP = text.isEmpty ? "—" : text
-        } catch {
-            egressIP = "—"
-        }
+        scheduleEgressRefresh()
     }
 
     func refreshSessionClock() {
@@ -528,8 +523,20 @@ final class AppModel {
 
     func select(_ node: OutboundNode) {
         dashboard.selectNode(node)
+        mixedPortRuntime.reloadSelections()
+        scheduleEgressRefresh()
     }
 
+    func selectPolicyMember(_ memberID: String, inGroup groupName: String) {
+        dashboard.selectPolicyMember(memberID, inGroup: groupName)
+        mixedPortRuntime.reloadSelections()
+        scheduleEgressRefresh()
+    }
+}
+
+// MARK: - Presentation & shortcuts
+
+extension AppModel {
     /// Focuses the standalone Inspector window, bringing the app forward.
     func presentInspector(using openWindow: OpenWindowAction) {
         openWindow(id: AppWindowID.inspector)

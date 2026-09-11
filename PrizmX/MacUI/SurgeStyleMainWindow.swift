@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import PrizmXServices
+import PrizmXUIComponents
 import PrizmXUIEngine
 
 /// Console: Home + Sources / Routing / Debug + More, Inspector pops out.
@@ -111,7 +112,7 @@ struct SurgeStyleMainWindow: View {
         .background {
             if appModel.selectedSidebarItem == .more {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.accentColor)
+                    .fill(WidgetChrome.accent)
             }
         }
         .padding(.horizontal, 10)

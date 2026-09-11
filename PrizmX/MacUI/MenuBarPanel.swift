@@ -36,7 +36,9 @@ struct MenuBarStatusLabel: View {
     }
 
     private var accessibilityTitle: String {
-        "PrizmX \(appModel.dashboard.status.rawValue), download \(appModel.dashboard.downloadSpeedString), upload \(appModel.dashboard.uploadSpeedString)"
+        let download = appModel.dashboard.downloadSpeedString
+        let upload = appModel.dashboard.uploadSpeedString
+        return "PrizmX \(appModel.dashboard.status.rawValue), download \(download), upload \(upload)"
     }
 }
 
@@ -228,10 +230,26 @@ struct MenuBarPanel: View {
 
             Divider()
 
-            LabeledContent("Download", value: appModel.dashboard.downloadSpeedString)
-            LabeledContent("Upload", value: appModel.dashboard.uploadSpeedString)
-            TrafficWaveform(points: appModel.dashboard.speedHistory)
-                .frame(height: 56)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("Upload")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(appModel.dashboard.uploadSpeedString)
+                    .font(.body.monospacedDigit())
+                Spacer(minLength: 8)
+                Text("Download")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(appModel.dashboard.downloadSpeedString)
+                    .font(.body.monospacedDigit())
+            }
+            TrafficWaveform(
+                points: appModel.dashboard.speedHistory,
+                series: .both,
+                splitAxis: true
+            )
+            .frame(height: 72)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
 
             Divider()
 

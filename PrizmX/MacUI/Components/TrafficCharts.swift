@@ -1,6 +1,7 @@
 import Charts
 import SwiftUI
 import PrizmXServices
+import PrizmXUIComponents
 
 /// One named bucket for stacked download / upload bars.
 struct TrafficCategory: Identifiable, Hashable {
@@ -33,8 +34,8 @@ struct TrafficBarChart: View {
                 .foregroundStyle(by: .value("Direction", item.direction))
             }
             .chartForegroundStyleScale([
-                "Down": Color.accentColor,
-                "Up": Color.secondary
+                "Down": WidgetChrome.trafficDownload,
+                "Up": WidgetChrome.trafficUpload
             ])
             .chartXAxis {
                 AxisMarks { value in

@@ -111,7 +111,15 @@ PROFILE_DIRS=(
 
 SIGNING_KEYCHAIN=""
 PREV_DEFAULT_KEYCHAIN=""
+PREV_KEYCHAIN_LIST=()
 cleanup_signing() {
+  # Restore the user's keychain search list first: install_signing_from_env
+  # replaces it with just the temp signing keychain, and leaving that state
+  # behind detaches login.keychain-db (apps then spam keychain prompts and
+  # Xcode reports "private key is not installed").
+  if [ ${#PREV_KEYCHAIN_LIST[@]} -gt 0 ]; then
+    security list-keychain -d user -s "${PREV_KEYCHAIN_LIST[@]}" >/dev/null 2>&1 || true
+  fi
   if [ -n "${PREV_DEFAULT_KEYCHAIN:-}" ]; then
     security default-keychain -s "$PREV_DEFAULT_KEYCHAIN" >/dev/null 2>&1 || true
   fi
@@ -210,6 +218,10 @@ install_signing_from_env() {
       security import "$ca" -k "$SIGNING_KEYCHAIN" -A >/dev/null || true
     done
     rm -rf "$ca_dir"
+    while IFS= read -r kc; do
+      kc="$(printf '%s' "$kc" | tr -d '"' | xargs)"
+      [ -n "$kc" ] && PREV_KEYCHAIN_LIST+=("$kc")
+    done < <(security list-keychain -d user)
     security list-keychain -d user -s \
       "$SIGNING_KEYCHAIN" /Library/Keychains/System.keychain
     PREV_DEFAULT_KEYCHAIN="$(security default-keychain | tr -d '"' | xargs)"

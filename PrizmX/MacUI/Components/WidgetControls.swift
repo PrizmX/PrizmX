@@ -6,6 +6,8 @@ struct WidgetCapsulePicker<Value: Hashable>: View {
     var options: [(value: Value, title: String)]
     @Binding var selection: Value
     var compact: Bool = false
+    /// When true, chips share the picker width (Ranking aligns to the chart).
+    var expands: Bool = false
 
     var body: some View {
         HStack(spacing: 3) {
@@ -19,7 +21,7 @@ struct WidgetCapsulePicker<Value: Hashable>: View {
                         .lineLimit(1)
                         .padding(.horizontal, compact ? 10 : 8)
                         .padding(.vertical, compact ? 5 : 6)
-                        .frame(maxWidth: compact ? nil : .infinity)
+                        .frame(maxWidth: (compact && !expands) ? nil : .infinity)
                         .background {
                             RoundedRectangle(cornerRadius: 5, style: .continuous)
                                 .fill(selected ? WidgetChrome.chipSelected : Color.clear)
@@ -35,6 +37,7 @@ struct WidgetCapsulePicker<Value: Hashable>: View {
             }
         }
         .padding(3)
+        .frame(maxWidth: expands ? .infinity : nil)
         .background {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(WidgetChrome.chipTrack)

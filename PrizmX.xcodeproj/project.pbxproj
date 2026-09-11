@@ -126,6 +126,7 @@
 				5B604097303FEE1300F6C632 /* Frameworks */,
 				5B604098303FEE1300F6C632 /* Resources */,
 				5B6040B9303FEE1400F6C70A /* Embed System Extensions */,
+				5B7D0101305E0001000A01 /* Install Debug to /Applications */,
 			);
 			buildRules = (
 			);
@@ -229,6 +230,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		5B7D0101305E0001000A01 /* Install Debug to /Applications */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Install Debug to /Applications";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ \"${CONFIGURATION}\" != \"Debug\" ]; then exit 0; fi\nAPP=\"${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}\"\nif [ -d \"$APP\" ]; then\n  rm -rf /Applications/PrizmX.app\n  ditto \"$APP\" /Applications/PrizmX.app\n  echo \"Installed $APP -> /Applications/PrizmX.app\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		5B604096303FEE1300F6C632 /* Sources */ = {
@@ -381,7 +404,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = PrizmX/PrizmX.entitlements;
+				CODE_SIGN_ENTITLEMENTS = PrizmX/PrizmX.Debug.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -389,10 +412,12 @@
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "PrizmX uses location to show your current Wi-Fi name on Home.";
 				INFOPLIST_KEY_NSSystemExtensionUsageDescription = "PrizmX uses a system extension to capture traffic in TUN mode.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -430,6 +455,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "PrizmX uses location to show your current Wi-Fi name on Home.";
 				INFOPLIST_KEY_NSSystemExtensionUsageDescription = "PrizmX uses a system extension to capture traffic in TUN mode.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -453,7 +479,7 @@
 		5B6040B6303FEE1400F6C707 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = PacketTunnel/PacketTunnel.entitlements;
+				CODE_SIGN_ENTITLEMENTS = PacketTunnel/PacketTunnel.Debug.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = N49M3Z72D3;
