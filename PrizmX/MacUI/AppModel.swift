@@ -275,6 +275,9 @@ final class AppModel {
                 )
             ]
         } else {
+            // Open-core Developer ID system extension: sendProviderMessage is
+            // unreliable. iOS / Pro leave the Kit default (.providerMessage).
+            VPNManager.metricsChannel = .kitFile
             let profiles = ProfileStore()
             dashboard = DashboardViewModel(
                 vpn: PrizmXServices.VPNManager.shared,
