@@ -46,12 +46,6 @@ struct PrizmXApp: App {
                 .onAppear { appModel.applyLaunchPolicy() }
         }
         .menuBarExtraStyle(.window)
-
-        Settings {
-            SettingsPane()
-                .environment(appModel)
-                .frame(minWidth: 420, minHeight: 360)
-        }
     }
 }
 

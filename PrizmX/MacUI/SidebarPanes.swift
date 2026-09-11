@@ -131,7 +131,8 @@ struct RulesPane: View {
                 ToolbarSearchField(text: $search, prompt: "Search rules")
             }
             ToolbarSpacer(.fixed, placement: .primaryAction)
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
+                ErrorToolbarButton()
                 InspectorToolbarButton()
             }
         }
@@ -242,21 +243,6 @@ private struct DisplayRule: Identifiable {
     var overlayID: UUID?
 }
 
-struct ComingSoonPane: View {
-    var title: String
-    var systemImage: String
-    var summary: String
-
-    var body: some View {
-        ContentUnavailableView {
-            Label(title, systemImage: systemImage)
-        } description: {
-            Text(summary)
-        }
-        .navigationTitle(title)
-    }
-}
-
 struct MorePane: View {
     @Environment(AppModel.self) private var appModel
 
@@ -272,7 +258,7 @@ struct MorePane: View {
                     GridRow {
                         LaunchTile(
                             title: "Settings",
-                            subtitle: "Appearance, capture, and shortcuts.",
+                            subtitle: "Appearance and shortcuts.",
                             systemImage: "slider.horizontal.3",
                             tint: .indigo
                         ) {
@@ -326,17 +312,18 @@ struct SettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Settings")
                     .font(.headline)
-                Text("Appearance, capture, and shortcuts.")
+                Text("Appearance and shortcuts.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
+            .padding(.horizontal, 20)
             SettingsForm()
         }
-        .padding(20)
+        .padding(.top, 20)
         .frame(minWidth: 520, minHeight: 520)
         .background(Color(nsColor: .windowBackgroundColor))
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -374,23 +361,7 @@ private struct SettingsForm: View {
                         Text(style.title).tag(style)
                     }
                 }
-                .help("Idle stays gray. Capture always uses amber. This only changes the connected proxy icon.")
-            }
-
-            Section("Capture") {
-                Toggle("System Proxy", isOn: $appModel.systemProxyEnabled)
-                Toggle("TUN Mode", isOn: $appModel.tunModeEnabled)
-                Toggle("Allow LAN", isOn: $appModel.allowLANEnabled)
-                Toggle("HTTP Capture", isOn: $appModel.httpCaptureEnabled)
-                    .help("Menu bar uses the capture tint when the proxy is also on. Tunnel wiring comes later.")
-                Text(
-                    "TUN captures domain traffic via FakeIP (198.18/16); DIRECT is spliced "
-                        + "to the real IP in userspace. System Proxy listens on mixed-port \(TunnelProviderKeys.defaultMixedPort) "
-                        + "(HTTP CONNECT and SOCKS5) and sets the macOS HTTP/HTTPS proxy. "
-                        + "Allow LAN binds that port on all interfaces."
-                )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .help("Idle stays gray. This only changes the connected proxy icon.")
             }
 
             Section("Shortcuts") {

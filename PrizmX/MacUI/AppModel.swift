@@ -118,9 +118,6 @@ enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
     case lan
     case policies
     case rules
-    case capture
-    case decrypt
-    case rewrite
     case more
 
     var id: String { rawValue }
@@ -132,9 +129,6 @@ enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
         case .lan: "LAN"
         case .policies: "Policies"
         case .rules: "Rules"
-        case .capture: "Capture"
-        case .decrypt: "Decrypt"
-        case .rewrite: "Rewrite"
         case .more: "More"
         }
     }
@@ -146,9 +140,6 @@ enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
         case .lan: "laptopcomputer.and.iphone"
         case .policies: "arrow.triangle.branch"
         case .rules: "list.bullet.rectangle"
-        case .capture: "record.circle"
-        case .decrypt: "lock.open"
-        case .rewrite: "arrow.left.arrow.right"
         case .more: "ellipsis"
         }
     }
@@ -163,7 +154,6 @@ final class AppModel {
         static let systemProxyEnabled = "systemProxyEnabled"
         static let tunModeEnabled = "tunModeEnabled"
         static let allowLANEnabled = "allowLANEnabled"
-        static let httpCaptureEnabled = "httpCaptureEnabled"
         static let menuBarConnectedStyle = "menuBarConnectedStyle"
         static let outboundMode = "outboundMode"
     }
@@ -172,6 +162,11 @@ final class AppModel {
     let nodeList: NodeListViewModel
     let trafficLedger: TrafficLedger
     let networkLink = NetworkLinkMonitor()
+    /// Direct internet RTT (not the selected node). `nil` before the first probe.
+    var internetLatency: Double?
+    /// UDP query time against the physical resolver (not FakeIP).
+    var dnsLatency: Double?
+    var isMeasuringPathLatency = false
     private let mixedPortRuntime = SystemProxyRuntime()
 
     var selectedSidebarItem: SidebarItem = .home
@@ -208,7 +203,7 @@ final class AppModel {
         didSet {
             guard systemProxyEnabled != oldValue else { return }
             UserDefaults.standard.set(systemProxyEnabled, forKey: DefaultsKey.systemProxyEnabled)
-            scheduleCaptureMode()
+            scheduleTakeover()
         }
     }
 
@@ -216,7 +211,7 @@ final class AppModel {
         didSet {
             guard tunModeEnabled != oldValue else { return }
             UserDefaults.standard.set(tunModeEnabled, forKey: DefaultsKey.tunModeEnabled)
-            scheduleCaptureMode()
+            scheduleTakeover()
         }
     }
 
@@ -224,14 +219,7 @@ final class AppModel {
         didSet {
             guard allowLANEnabled != oldValue else { return }
             UserDefaults.standard.set(allowLANEnabled, forKey: DefaultsKey.allowLANEnabled)
-            scheduleCaptureMode()
-        }
-    }
-
-    var httpCaptureEnabled: Bool {
-        didSet {
-            guard httpCaptureEnabled != oldValue else { return }
-            UserDefaults.standard.set(httpCaptureEnabled, forKey: DefaultsKey.httpCaptureEnabled)
+            scheduleTakeover()
         }
     }
 
@@ -247,7 +235,7 @@ final class AppModel {
     @ObservationIgnored
     nonisolated(unsafe) private var trafficIngestTask: Task<Void, Never>?
     @ObservationIgnored
-    nonisolated(unsafe) private var captureModeTask: Task<Void, Never>?
+    nonisolated(unsafe) private var takeoverTask: Task<Void, Never>?
     @ObservationIgnored
     nonisolated(unsafe) var egressRefreshTask: Task<Void, Never>?
     @ObservationIgnored
@@ -268,11 +256,12 @@ final class AppModel {
             systemProxyEnabled = true
             tunModeEnabled = true
             allowLANEnabled = false
-            httpCaptureEnabled = false
             menuBarConnectedStyle = .monochrome
             outboundMode = .rule
             sessionStartedAt = Date().addingTimeInterval(-3_723)
             trafficLedger = .preview
+            internetLatency = 9
+            dnsLatency = 6
             inspectorRecentFlows = [
                 FlowRecord(
                     startedAt: Date().addingTimeInterval(-8),
@@ -298,7 +287,6 @@ final class AppModel {
             systemProxyEnabled = UserDefaults.standard.bool(forKey: DefaultsKey.systemProxyEnabled)
             tunModeEnabled = UserDefaults.standard.object(forKey: DefaultsKey.tunModeEnabled) as? Bool ?? true
             allowLANEnabled = UserDefaults.standard.bool(forKey: DefaultsKey.allowLANEnabled)
-            httpCaptureEnabled = UserDefaults.standard.bool(forKey: DefaultsKey.httpCaptureEnabled)
             menuBarConnectedStyle = MenuBarConnectedStyle(
                 rawValue: UserDefaults.standard.string(forKey: DefaultsKey.menuBarConnectedStyle) ?? ""
             ) ?? .monochrome
@@ -335,7 +323,7 @@ final class AppModel {
                 tunModeEnabled = false
                 UserDefaults.standard.set(false, forKey: DefaultsKey.tunModeEnabled)
             } else if tunModeEnabled || systemProxyEnabled {
-                Task { await applyCaptureMode() }
+                Task { await applyTakeover() }
             }
             persistOutboundMode()
         }
@@ -356,7 +344,7 @@ final class AppModel {
 
     deinit {
         trafficIngestTask?.cancel()
-        captureModeTask?.cancel()
+        takeoverTask?.cancel()
         egressRefreshTask?.cancel()
         if let keyMonitor {
             NSEvent.removeMonitor(keyMonitor)
@@ -393,6 +381,21 @@ final class AppModel {
     var hasSelectedNodePing: Bool {
         guard let id = nodeList.selectedNodeID else { return false }
         return nodeList.latencyByNodeID[id] != nil
+    }
+
+    func refreshPathLatency() async {
+        guard !isMeasuringPathLatency else { return }
+        isMeasuringPathLatency = true
+        defer { isMeasuringPathLatency = false }
+        let probe = PathLatencyProbe()
+        async let internet = probe.measureInternet()
+        async let dns = probe.measureDNS()
+        if let id = nodeList.selectedNodeID,
+           let node = nodeList.profiles.nodeManager?.nodesByID[id] {
+            await nodeList.ping(node)
+        }
+        internetLatency = await internet
+        dnsLatency = await dns
     }
 
     var inspectorRequests: [InspectorRequest] {
@@ -449,7 +452,7 @@ final class AppModel {
             dashboard.vpn.stopVPN()
             try? await Task.sleep(for: .milliseconds(400))
         }
-        await applyCaptureMode()
+        await applyTakeover()
     }
 
     func toggleConnection() async {
@@ -460,17 +463,17 @@ final class AppModel {
 
     /// Coalesce rapid TUN / System Proxy / Allow LAN flips onto the last state
     /// so apply+restore cannot race and re-prompt.
-    private func scheduleCaptureMode() {
-        captureModeTask?.cancel()
-        captureModeTask = Task { @MainActor in
+    private func scheduleTakeover() {
+        takeoverTask?.cancel()
+        takeoverTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
-            await applyCaptureMode()
+            await applyTakeover()
         }
     }
 
     /// TUN → Packet Tunnel (FakeIP). System Proxy → mixed-port in this process.
-    func applyCaptureMode() async {
+    func applyTakeover() async {
         let config = dashboard.profiles.activeProfile?.rawConfig ?? VPNManager.defaultDirectConfig
         let overlay = dashboard.profiles.overlay
         if tunModeEnabled {
@@ -555,6 +558,12 @@ extension AppModel {
         openWindow(id: AppWindowID.main)
         NSApp.activate(ignoringOtherApps: true)
         DockPolicy.apply(menuBarOnly: menuBarOnly)
+    }
+
+    /// Settings is a sheet on the main window (no standalone Settings scene).
+    func presentSettings(using openWindow: OpenWindowAction) {
+        presentMain(using: openWindow)
+        presentedMoreSheet = .settings
     }
 
     func quit() {

@@ -34,6 +34,8 @@ enum NetworkLinkKind: Equatable {
 final class NetworkLinkMonitor: NSObject, CLLocationManagerDelegate {
     private(set) var title = "—"
     private(set) var kind: NetworkLinkKind = .other
+    /// Primary interface IPv4, for the LAN widget listen address.
+    private(set) var lanIPv4 = "—"
     var onChange: (@MainActor () -> Void)?
     private let monitor = NWPathMonitor()
     private let location = CLLocationManager()
@@ -70,9 +72,11 @@ final class NetworkLinkMonitor: NSObject, CLLocationManagerDelegate {
 
     private func refreshTitle() {
         let snapshot = Self.snapshot(for: latestPath ?? monitor.currentPath)
-        let changed = snapshot.title != title || snapshot.kind != kind
+        let ip = Self.primaryIPv4() ?? "—"
+        let changed = snapshot.title != title || snapshot.kind != kind || ip != lanIPv4
         title = snapshot.title
         kind = snapshot.kind
+        lanIPv4 = ip
         if changed, hasPublished {
             onChange?()
         }
@@ -132,6 +136,19 @@ final class NetworkLinkMonitor: NSObject, CLLocationManagerDelegate {
         if name.contains("personal hotspot") { return true }
         if name.contains("bluetooth pan") || name.contains("蓝牙") { return true }
         return false
+    }
+
+    /// IPv4 of the primary interface (`State:/Network/Interface/<bsd>/IPv4`).
+    nonisolated private static func primaryIPv4() -> String? {
+        guard let bsd = primaryBSDName(),
+              let store = SCDynamicStoreCreate(nil, "PrizmX.NetworkLink" as CFString, nil, nil),
+              let info = SCDynamicStoreCopyValue(
+                store,
+                "State:/Network/Interface/\(bsd)/IPv4" as CFString
+              ) as? [String: Any],
+              let addresses = info["Addresses"] as? [String]
+        else { return nil }
+        return addresses.first { !$0.isEmpty }
     }
 
     /// `State:/Network/Global/IPv4` PrimaryInterface (en0, en1, …).

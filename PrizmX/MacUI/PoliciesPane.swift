@@ -51,7 +51,8 @@ struct PoliciesPane: View {
                 ToolbarSearchField(text: $nodeList.searchText, prompt: "Filter nodes")
             }
             ToolbarSpacer(.fixed, placement: .primaryAction)
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
+                ErrorToolbarButton()
                 InspectorToolbarButton()
             }
         }

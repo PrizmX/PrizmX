@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import PrizmXConfig
 import PrizmXServices
 import PrizmXUIComponents
 import PrizmXUIEngine
@@ -45,14 +46,6 @@ struct HomePane: View {
                         height: WidgetGrid.boardHeight(rows: rows, unit: unit),
                         alignment: .topLeading
                     )
-                    if let error = appModel.dashboard.lastError {
-                        InfoWidget(title: "Error", systemImage: "exclamationmark.triangle", size: .large) {
-                            Text(error)
-                                .foregroundStyle(.red)
-                                .textSelection(.enabled)
-                        }
-                        .environment(\.widgetUnit, unit)
-                    }
                 }
                 .frame(width: boardWidth)
                 .padding(.bottom, 20)
@@ -69,6 +62,7 @@ struct HomePane: View {
         }
         .navigationTitle("Home")
         .task {
+            await appModel.refreshPathLatency()
             await appModel.refreshEgress()
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(15 * 60))
@@ -76,7 +70,7 @@ struct HomePane: View {
                 await appModel.refreshEgress()
             }
         }
-        // Node / mode / capture / network changes schedule a coalesced
+        // Node / mode / takeover / network changes schedule a coalesced
         // refresh in AppModel — no per-event onChange here (that raced the
         // route change and double-queried).
         .onChange(of: appModel.dashboard.status) {
@@ -168,10 +162,32 @@ struct HomePane: View {
                 }
             }
             .frame(width: unit, alignment: .leading)
-            headerFact("Profile", appModel.dashboard.activeProfileName)
-                .frame(width: unit, alignment: .leading)
-            headerFact("Mode", appModel.outboundMode.title)
-                .frame(width: unit, alignment: .leading)
+            headerFact("Profile") {
+                HStack(spacing: 6) {
+                    Image(systemName: profileHeaderIcon)
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 16, height: 16)
+                    Text(appModel.dashboard.activeProfileName)
+                        .font(.headline)
+                        .lineLimit(1)
+                }
+                .frame(height: 18, alignment: .leading)
+            }
+            .frame(width: unit, alignment: .leading)
+            headerFact("Mode") {
+                HStack(spacing: 6) {
+                    Image(systemName: appModel.outboundMode.systemImage)
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 16, height: 16)
+                    Text(appModel.outboundMode.title)
+                        .font(.headline)
+                        .lineLimit(1)
+                }
+                .frame(height: 18, alignment: .leading)
+            }
+            .frame(width: unit, alignment: .leading)
             headerFact("External IP") {
                 Button {
                     showsEgressInfo = true
@@ -205,9 +221,10 @@ struct HomePane: View {
         @Bindable var model = appModel
         switch id {
         case .outbound: outboundWidget
-        case .capture:
+        case .takeover:
             TakeoverCard(
                 headline: takeoverHeadline,
+                startedAt: appModel.isVPNOn ? appModel.sessionStartedAt : nil,
                 proxyIsOn: $model.systemProxyEnabled,
                 tunIsOn: $model.tunModeEnabled
             )
@@ -231,10 +248,11 @@ struct HomePane: View {
             )
         case .totalTraffic: trafficWidget
         case .ranking: rankingWidget
+        case .lan: lanWidget
         }
     }
 
-    // MARK: - Outbound / Capture
+    // MARK: - Outbound / Takeover
 
     private var outboundWidget: some View {
         @Bindable var model = appModel
@@ -297,39 +315,48 @@ struct HomePane: View {
         return LatencyCard(
             value: parts.value,
             unit: parts.unit,
-            nodeText: appModel.dashboard.activeNodeName,
-            bestText: latencyBestText
+            dnsText: latencyFoot(appModel.dnsLatency),
+            proxyText: latencyFoot(appModel.selectedNodeLatency)
         ) {
             WidgetIconButton(
                 systemImage: "arrow.clockwise",
-                help: "Ping current node",
-                enabled: !appModel.nodeList.isPinging
+                help: "Test internet, DNS, and proxy latency",
+                enabled: !appModel.isMeasuringPathLatency
             ) {
-                Task { await pingSelected() }
+                Task { await appModel.refreshPathLatency() }
             }
         }
     }
 
     private var connectionsWidget: some View {
-        let live = appModel.dashboard.vpn.activeConnections
-        let flows = appModel.dashboard.vpn.lastMetrics.activeFlows
+        let metrics = appModel.dashboard.vpn.lastMetrics
+        let flows = metrics.activeFlows
         let processes = Set(flows.compactMap { $0.attribution?.accountingKey })
         let hosts = Set(flows.map(\.endpoint.host.description))
         return ConnectionsCard(
-            count: live,
+            tcpCount: metrics.tcpConnections,
+            udpCount: metrics.udpConnections,
             processesText: "\(processes.count)",
             hostsText: "\(hosts.count)"
-        ) {
-            Button {
-                appModel.presentInspector(using: openWindow)
-            } label: {
-                Image(systemName: "circle.fill")
-                    .font(.caption2)
-                    .foregroundStyle(appModel.dashboard.status == .connected ? Color.green : Color.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Open Inspector")
+        )
+    }
+
+    private var lanWidget: some View {
+        @Bindable var model = appModel
+        let address: String
+        if !model.allowLANEnabled {
+            address = "Off"
+        } else if !model.systemProxyEnabled {
+            address = "Enable Proxy"
+        } else {
+            address = appModel.networkLink.lanIPv4
         }
+        return LANCard(
+            isOn: $model.allowLANEnabled,
+            address: address,
+            port: TunnelProviderKeys.defaultMixedPort,
+            deviceCount: 0
+        )
     }
 
     // MARK: - Traffic / Ranking
@@ -373,6 +400,13 @@ struct HomePane: View {
         return appModel.nodeList.filteredNodes.first { $0.id == id }
     }
 
+    /// Same glyphs as More → Profiles: local file vs subscription URL.
+    private var profileHeaderIcon: String {
+        let profile = appModel.dashboard.profiles.activeProfile
+        if profile == nil { return "doc" }
+        return profile?.subscriptionURL == nil ? "doc.fill" : "link.circle.fill"
+    }
+
     private var outboundHeadline: String {
         switch appModel.dashboard.status {
         case .connected: "Connected"
@@ -396,22 +430,20 @@ struct HomePane: View {
     }()
 
     private var latencyParts: (value: String, unit: String) {
-        guard appModel.hasSelectedNodePing else { return ("—", "") }
-        return LatencyFormat.parts(appModel.selectedNodeLatency)
+        guard let rtt = appModel.internetLatency, !LatencyFormat.isTimeout(rtt) else {
+            return ("—", "")
+        }
+        return LatencyFormat.parts(rtt)
     }
 
-    private var latencyBestText: String {
-        let samples = appModel.nodeList.latencyByNodeID.values.compactMap { rtt -> Double? in
-            guard let rtt, !LatencyFormat.isTimeout(rtt) else { return nil }
-            return rtt
-        }
-        guard let best = samples.min() else { return "—" }
-        return LatencyFormat.label(best)
+    private func latencyFoot(_ milliseconds: Double?) -> String {
+        guard milliseconds != nil else { return "—" }
+        return LatencyFormat.label(milliseconds)
     }
 
     private var latencyDisplay: String {
-        let parts = latencyParts
-        return parts.unit.isEmpty ? parts.value : "\(parts.value) \(parts.unit)"
+        guard appModel.hasSelectedNodePing else { return "—" }
+        return LatencyFormat.label(appModel.selectedNodeLatency)
     }
 
     private func headerFact(_ title: String, _ value: String) -> some View {
@@ -432,10 +464,6 @@ struct HomePane: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func pingSelected() async {
-        guard let node = selectedNode else { return }
-        await appModel.nodeList.ping(node)
-    }
 }
 
 typealias DashboardPane = HomePane

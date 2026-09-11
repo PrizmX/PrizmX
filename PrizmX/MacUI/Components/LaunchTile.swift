@@ -45,7 +45,7 @@ struct LaunchTile: View {
     HStack(alignment: .top, spacing: 32) {
         LaunchTile(
             title: "Settings",
-            subtitle: "Appearance, capture, and shortcuts.",
+            subtitle: "Appearance and shortcuts.",
             systemImage: "slider.horizontal.3",
             tint: .indigo
         )

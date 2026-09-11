@@ -4,7 +4,7 @@ import PrizmXServices
 import PrizmXUIComponents
 import PrizmXUIEngine
 
-/// Console: Home + Sources / Routing / Debug + More, Inspector pops out.
+/// Console: Home + Sources / Routing + More, Inspector pops out.
 struct SurgeStyleMainWindow: View {
     @Environment(AppModel.self) private var appModel
 
@@ -29,7 +29,8 @@ struct SurgeStyleMainWindow: View {
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .toolbar {
             if appModel.selectedSidebarItem != .rules && appModel.selectedSidebarItem != .policies {
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    ErrorToolbarButton()
                     InspectorToolbarButton()
                 }
             }
@@ -68,11 +69,6 @@ struct SurgeStyleMainWindow: View {
             Section("Routing") {
                 sidebarRow(.policies)
                 sidebarRow(.rules)
-            }
-            Section("Debug") {
-                sidebarRow(.capture)
-                sidebarRow(.decrypt)
-                sidebarRow(.rewrite)
             }
         }
         .listStyle(.sidebar)
@@ -147,24 +143,6 @@ struct SurgeStyleMainWindow: View {
             PoliciesPane()
         case .rules:
             RulesPane()
-        case .capture:
-            ComingSoonPane(
-                title: SidebarItem.capture.title,
-                systemImage: SidebarItem.capture.systemImage,
-                summary: "Filters and recording for the Inspector window."
-            )
-        case .decrypt:
-            ComingSoonPane(
-                title: SidebarItem.decrypt.title,
-                systemImage: SidebarItem.decrypt.systemImage,
-                summary: "HTTPS decryption and certificate trust. Inspector shows headers and bodies once this is wired."
-            )
-        case .rewrite:
-            ComingSoonPane(
-                title: SidebarItem.rewrite.title,
-                systemImage: SidebarItem.rewrite.systemImage,
-                summary: "URL, header, and body rewrite rules."
-            )
         case .more:
             MorePane()
         }
@@ -177,8 +155,8 @@ struct AppCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .appSettings) {
-            SettingsLink {
-                Text("Settings…")
+            Button("Settings…") {
+                appModel.presentSettings(using: openWindow)
             }
             .keyboardShortcut(",", modifiers: .command)
         }

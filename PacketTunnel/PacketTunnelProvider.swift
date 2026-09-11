@@ -22,11 +22,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private var relayTask: Task<Void, Never>?
     private var pathMonitor: Network.NWPathMonitor?
     private var pathRefreshTask: Task<Void, Never>?
+    private var metricsTask: Task<Void, Never>?
     private var lastPathFingerprint: String?
     private var useFakeIP = true
     private var systemDNS: [String] = []
     private var ipv6FakeIP = false
     private let log = Logger(subsystem: "app.prizmx", category: "PacketTunnel")
+    /// Last 1s snapshot for `handleAppMessage`; the host UI reads the kit file.
+    private let lastMetrics = OSAllocatedUnfairLock(initialState: TrafficSnapshot.zero)
 
     // MARK: - Start
 
@@ -138,6 +141,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         TunnelLog.write(.info, "tunnel started fakeIP=\(useFakeIP) route=\(useFakeIP ? "198.18.0.0/16" : "default")")
         log.info("tunnel started fakeIP=\(useFakeIP, privacy: .public) (SwiftTCP)")
         TunnelLifecycleStore.markStarted()
+        startMetricsDump()
     }
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)? = nil) {
@@ -147,8 +151,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         switch request.method {
         case .fetchMetrics:
-            let snapshot = engine?.traffic.snapshot() ?? TrafficSnapshot()
-            completionHandler?(try? TunnelIPC.encode(.success(metrics: snapshot)))
+            reply(.success(metrics: lastMetrics.withLock { $0 }), completionHandler)
         case .selectNode:
             guard let nodeID = request.nodeID, let group = request.groupName else {
                 completionHandler?(try? TunnelIPC.encode(.failure("selectNode missing nodeID/groupName")))
@@ -225,6 +228,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         pathMonitor = nil
         pathRefreshTask?.cancel()
         pathRefreshTask = nil
+        stopMetricsDump()
         pumpTask?.cancel()
         relayTask?.cancel()
         pumpTask = nil
@@ -235,6 +239,47 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         stack = nil
         TunnelLog.write(.info, "tunnel stopped")
         log.info("tunnel stopped")
+    }
+
+    /// Writes counters to the kit every 1s. Do not also `snapshot()` from
+    /// `handleAppMessage` — that call resets the rate window.
+    private func startMetricsDump() {
+        publishMetrics()
+        metricsTask?.cancel()
+        metricsTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard let self, !Task.isCancelled else { return }
+                self.publishMetrics()
+            }
+        }
+    }
+
+    private func stopMetricsDump() {
+        metricsTask?.cancel()
+        metricsTask = nil
+        lastMetrics.withLock { $0 = .zero }
+        TunnelMetricsStore.clear()
+    }
+
+    private func publishMetrics() {
+        let snapshot = engine?.traffic.snapshot() ?? .zero
+        lastMetrics.withLock { $0 = snapshot }
+        if !TunnelMetricsStore.save(snapshot) {
+            TunnelLog.write(.error, "metrics file write failed")
+        }
+    }
+
+    private func reply(
+        _ response: TunnelIPC.Response,
+        _ completionHandler: ((Data?) -> Void)?
+    ) {
+        do {
+            completionHandler?(try TunnelIPC.encode(response))
+        } catch {
+            TunnelLog.write(.error, "IPC encode failed: \(error.localizedDescription)")
+            completionHandler?(nil)
+        }
     }
 
     // MARK: - Physical path

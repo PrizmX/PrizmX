@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import PrizmXUIEngine
 
 /// Native `NSSearchField` so the toolbar can keep system search chrome
 /// without `.searchable` stealing the trailing-most slot.
@@ -60,5 +61,35 @@ struct InspectorToolbarButton: View {
         }
         .labelStyle(.iconOnly)
         .help("Inspector")
+    }
+}
+
+/// Hidden until `dashboard.lastError` is set. Sits left of Inspector.
+struct ErrorToolbarButton: View {
+    @Environment(AppModel.self) private var appModel
+    @State private var showsPopover = false
+
+    var body: some View {
+        if let error = appModel.dashboard.lastError {
+            Button("Error", systemImage: "exclamationmark.triangle.fill") {
+                showsPopover.toggle()
+            }
+            .labelStyle(.iconOnly)
+            .foregroundStyle(.orange)
+            .help(error)
+            .popover(isPresented: $showsPopover, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Error", systemImage: "exclamationmark.triangle.fill")
+                        .font(.headline)
+                        .foregroundStyle(.orange)
+                    Text(error)
+                        .font(.body)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: 360, alignment: .leading)
+                }
+                .padding(16)
+                .frame(minWidth: 240)
+            }
+        }
     }
 }

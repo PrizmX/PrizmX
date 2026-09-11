@@ -21,9 +21,6 @@ struct MenuBarStatusLabel: View {
 
     /// `nil` = keep system black/white template. Otherwise bake this color into pixels.
     private var menuBarTint: NSColor? {
-        if appModel.isVPNOn, appModel.httpCaptureEnabled {
-            return NSColor(named: "MenuBarCapture")
-        }
         if appModel.isVPNOn {
             switch appModel.menuBarConnectedStyle {
             case .monochrome:
@@ -166,7 +163,6 @@ private final class MenuBarIconProbeView: NSView {
 struct MenuBarPanel: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         @Bindable var appModel = appModel
@@ -255,7 +251,7 @@ struct MenuBarPanel: View {
 
             Button("Open Console…") { appModel.presentMain(using: openWindow, selecting: .home) }
             Button("Inspector…") { appModel.presentInspector(using: openWindow) }
-            Button("Settings…") { openSettings() }
+            Button("Settings…") { appModel.presentSettings(using: openWindow) }
             Button("Quit PrizmX", role: .destructive) { appModel.quit() }
         }
         .padding(14)

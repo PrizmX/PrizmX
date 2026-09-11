@@ -55,6 +55,9 @@ struct WidgetIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
+                .font(.system(size: 15, weight: .semibold))
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
         .disabled(!enabled)

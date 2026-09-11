@@ -4,7 +4,8 @@ import PrizmXUIComponents
 
 enum HomeWidgetID: String, CaseIterable, Codable, Identifiable {
     case outbound
-    case capture
+    /// Takeover card. Raw value kept so existing Home layouts still match.
+    case takeover = "capture"
     case subscription
     case node
     case latency
@@ -13,6 +14,7 @@ enum HomeWidgetID: String, CaseIterable, Codable, Identifiable {
     case download
     case totalTraffic
     case ranking
+    case lan
 
     var id: String { rawValue }
 
@@ -20,7 +22,7 @@ enum HomeWidgetID: String, CaseIterable, Codable, Identifiable {
         switch self {
         case .latency, .connections, .upload, .download:
             return .small
-        case .outbound, .capture, .subscription, .node, .totalTraffic:
+        case .outbound, .takeover, .subscription, .node, .totalTraffic, .lan:
             return .medium
         case .ranking:
             return .large
