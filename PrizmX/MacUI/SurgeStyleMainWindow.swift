@@ -3,7 +3,7 @@ import SwiftUI
 import PrizmXServices
 import PrizmXUIEngine
 
-/// Console: Home + Sources / Routing / Extend / System, Inspector pops out.
+/// Console: Home + Sources / Routing / Advanced / System, Inspector pops out.
 struct SurgeStyleMainWindow: View {
     @Environment(AppModel.self) private var appModel
 
@@ -54,20 +54,20 @@ struct SurgeStyleMainWindow: View {
         return List(selection: $appModel.selectedSidebarItem) {
             sidebarRow(.home)
 
-            Section("Sources") {
+            Section("SOURCES") {
                 sidebarRow(.apps)
                 sidebarRow(.lan)
             }
-            Section("Routing") {
+            Section("ROUTING") {
                 sidebarRow(.profiles)
                 sidebarRow(.policies)
                 sidebarRow(.rules)
             }
-            Section("Extend") {
+            Section("ADVANCED") {
                 sidebarRow(.module)
                 sidebarRow(.scripts)
             }
-            Section("System") {
+            Section("SYSTEM") {
                 sidebarRow(.settings)
                 sidebarRow(.events)
             }
