@@ -247,11 +247,15 @@ struct SettingsPane: View {
         @Bindable var appModel = appModel
 
         Form {
-            Section("Appearance") {
+            Section("General") {
+                LaunchAtLoginToggle()
                 Toggle(isOn: $appModel.menuBarOnly) {
                     Text("Menu Bar Only")
                     Text("Hide the Dock icon and keep PrizmX in the menu bar.")
                 }
+            }
+
+            Section("Appearance") {
                 Picker("Connected Icon", selection: $appModel.menuBarConnectedStyle) {
                     ForEach(MenuBarConnectedStyle.allCases) { style in
                         Text(style.title).tag(style)
