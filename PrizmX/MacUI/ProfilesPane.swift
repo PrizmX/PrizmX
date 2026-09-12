@@ -56,7 +56,7 @@ struct ProfilesPane: View {
                     Button("Delete", systemImage: "minus") {
                         removeSelected()
                     }
-                    .disabled(actionProfileID == nil)
+                    .disabled(selectedID == nil)
                     .help("Remove")
                 }
             }
@@ -121,7 +121,8 @@ struct ProfilesPane: View {
 
     private var store: ProfileStore { appModel.dashboard.profiles }
 
-    /// Table can clear selection when the minus button is clicked; keep the last row.
+    /// Minus is enabled from `selectedID`. `lastSelectedID` covers the case
+    /// where the table clears selection as the toolbar button is pressed.
     private var actionProfileID: UUID? { selectedID ?? lastSelectedID }
 
     private var profileTable: some View {

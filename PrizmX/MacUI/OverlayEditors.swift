@@ -93,6 +93,7 @@ struct OverlayGroupEditor: View {
     @Environment(\.dismiss) private var dismiss
     var title: String
     var memberChoices: [String]
+    var nameLocked: Bool = false
     var initial: OverlayGroup
     var onSave: (OverlayGroup) -> Void
 
@@ -104,11 +105,13 @@ struct OverlayGroupEditor: View {
     init(
         title: String,
         memberChoices: [String],
+        nameLocked: Bool = false,
         initial: OverlayGroup,
         onSave: @escaping (OverlayGroup) -> Void
     ) {
         self.title = title
         self.memberChoices = memberChoices
+        self.nameLocked = nameLocked
         self.initial = initial
         self.onSave = onSave
         _name = State(initialValue: initial.name)
@@ -123,6 +126,7 @@ struct OverlayGroupEditor: View {
             Form {
                 TextField("Name", text: $name)
                     .textFieldStyle(.roundedBorder)
+                    .disabled(nameLocked)
                 Picker("Mode", selection: $mode) {
                     Text("select").tag("select")
                     Text("url-test").tag("url-test")
@@ -173,7 +177,11 @@ struct OverlayGroupEditor: View {
         next.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         next.mode = mode
         next.members = memberChoices.filter { members.contains($0) }
-        next.selectedMember = next.members.first
+        if let selected = initial.selectedMember, next.members.contains(selected) {
+            next.selectedMember = selected
+        } else {
+            next.selectedMember = next.members.first
+        }
         next.testURL = testURL.trimmingCharacters(in: .whitespacesAndNewlines)
         onSave(next)
         dismiss()

@@ -44,12 +44,12 @@ struct PoliciesPane: View {
                         editor = OverlayGroup(name: "Local", members: ["DIRECT"])
                     }
                     .disabled(appModel.dashboard.profiles.activeProfile == nil)
-                    .help("Add a local policy group. Remote groups stay read-only.")
+                    .help("Add a local policy group.")
                     Button("Delete", systemImage: "minus") {
-                        deleteSelectedLocalGroup()
+                        deleteSelectedOverlayGroup()
                     }
-                    .disabled(selectedLocalGroup == nil)
-                    .help("Delete")
+                    .disabled(selectedOverlayGroup == nil)
+                    .help(isProfileGroup(selectedGroupID) ? "Revert to profile" : "Delete")
                 }
             }
             ToolbarItem(placement: .primaryAction) {
@@ -75,8 +75,9 @@ struct PoliciesPane: View {
         }
         .sheet(item: $editor) { group in
             OverlayGroupEditor(
-                title: overlay.groups.contains(where: { $0.id == group.id }) ? "Edit Group" : "Add Group",
-                memberChoices: memberChoices,
+                title: editorTitle(for: group),
+                memberChoices: memberChoices(including: group.members),
+                nameLocked: isProfileGroup(group.name),
                 initial: group
             ) { saved in
                 upsertLocal(saved)
@@ -103,7 +104,7 @@ struct PoliciesPane: View {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
                             Text(group.title)
-                            if isLocal(group.id) {
+                            if isOverlayOnly(group.id) {
                                 Text("Local")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
@@ -118,11 +119,16 @@ struct PoliciesPane: View {
         }
         .tableStyle(.inset)
         .contextMenu(forSelectionType: String.self) { ids in
-            if let id = ids.first,
-               let local = overlay.groups.first(where: { $0.name == id }) {
-                Button("Edit…") { editor = local }
-                Button("Delete", role: .destructive) { deleteLocal(local.id) }
+            if let id = ids.first {
+                Button("Edit…") { beginEdit(id) }
+                if let overlayGroup = overlay.groups.first(where: { $0.name == id }) {
+                    Button(isProfileGroup(id) ? "Revert to Profile" : "Delete", role: .destructive) {
+                        deleteLocal(overlayGroup.id)
+                    }
+                }
             }
+        } primaryAction: { ids in
+            if let id = ids.first { beginEdit(id) }
         }
     }
 
@@ -212,15 +218,35 @@ struct PoliciesPane: View {
 
     private var overlay: ProfileOverlay { appModel.dashboard.profiles.overlay }
 
-    private var selectedLocalGroup: OverlayGroup? {
+    private var selectedOverlayGroup: OverlayGroup? {
         overlay.groups.first { $0.name == selectedGroupID }
     }
 
-    private func isLocal(_ name: String) -> Bool {
-        overlay.groups.contains { $0.name == name }
+    private func isOverlayOnly(_ name: String) -> Bool {
+        overlay.groups.contains { $0.name == name } && !isProfileGroup(name)
     }
 
-    private var memberChoices: [String] {
+    private func isProfileGroup(_ name: String?) -> Bool {
+        guard let name else { return false }
+        return appModel.dashboard.profiles.profileGroupNames.contains(name)
+    }
+
+    private func editorTitle(for group: OverlayGroup) -> String {
+        if overlay.groups.contains(where: { $0.id == group.id }) || isProfileGroup(group.name) {
+            return "Edit Group"
+        }
+        return "Add Group"
+    }
+
+    private func beginEdit(_ id: String) {
+        if let local = overlay.groups.first(where: { $0.name == id }) {
+            editor = local
+        } else if let policy = appModel.dashboard.profiles.nodeManager?.group(named: id) {
+            editor = OverlayGroup(from: policy)
+        }
+    }
+
+    private func memberChoices(including extra: [String] = []) -> [String] {
         var names = ["DIRECT", "REJECT"]
         if let manager = appModel.dashboard.profiles.nodeManager {
             names.append(contentsOf: manager.nodesByID.keys.sorted())
@@ -230,14 +256,18 @@ struct PoliciesPane: View {
                 }
             )
         }
+        names.append(contentsOf: extra)
         var seen = Set<String>()
         return names.filter { seen.insert($0).inserted }
     }
 
     private func upsertLocal(_ group: OverlayGroup) {
         var next = overlay
-        if let index = next.groups.firstIndex(where: { $0.id == group.id }) {
-            next.groups[index] = group
+        if let index = next.groups.firstIndex(where: { $0.id == group.id })
+            ?? next.groups.firstIndex(where: { $0.name == group.name }) {
+            var saved = group
+            saved.id = next.groups[index].id
+            next.groups[index] = saved
         } else {
             next.groups.append(group)
         }
@@ -245,22 +275,23 @@ struct PoliciesPane: View {
         selectedGroupID = group.name
     }
 
-    private func deleteSelectedLocalGroup() {
-        guard let id = selectedLocalGroup?.id else { return }
+    private func deleteSelectedOverlayGroup() {
+        guard let id = selectedOverlayGroup?.id else { return }
         deleteLocal(id)
     }
 
     private func deleteLocal(_ id: UUID) {
+        let name = overlay.groups.first { $0.id == id }?.name
         var next = overlay
         next.groups.removeAll { $0.id == id }
         appModel.saveOverlay(next)
-        selectedGroupID = nil
+        selectedGroupID = name.flatMap { isProfileGroup($0) ? $0 : nil }
     }
 
     private func groupSubtitle(_ group: PolicyGroupSection) -> String {
         let count = "\(group.members.count) members"
         if let mode = appModel.dashboard.profiles.nodeManager?.group(named: group.id)?.mode {
-            return "\(mode.displayName) · \(count)"
+            return "\(mode.clashType) · \(count)"
         }
         return count
     }
