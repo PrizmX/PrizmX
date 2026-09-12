@@ -2,6 +2,43 @@ import AppKit
 import SwiftUI
 import PrizmXUIEngine
 
+/// Plus/minus (and similar) capsule on Profiles / Policies / Rules / Events.
+struct IconControlGroup<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        ControlGroup(content: content)
+            .controlGroupStyle(.navigation)
+            .labelStyle(.iconOnly)
+    }
+}
+
+/// Page actions keep Error + Inspector trailing-most.
+struct ConsoleInspectorToolbar: ToolbarContent {
+    var body: some ToolbarContent {
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+        ToolbarItemGroup(placement: .primaryAction) {
+            ErrorToolbarButton()
+            InspectorToolbarButton()
+        }
+    }
+}
+
+struct ConsoleEmptyState: View {
+    var title: String
+    var systemImage: String
+    var description: String
+
+    var body: some View {
+        ContentUnavailableView {
+            Label(title, systemImage: systemImage)
+        } description: {
+            Text(description)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
 /// Native `NSSearchField` so the toolbar can keep system search chrome
 /// without `.searchable` stealing the trailing-most slot.
 struct ToolbarSearchField: NSViewRepresentable {

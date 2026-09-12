@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import PrizmXProtocols
 import PrizmXServices
 import PrizmXUIEngine
 
@@ -37,13 +38,13 @@ struct LANPane: View {
             Section {
                 if appModel.allowLANEnabled {
                     ContentUnavailableView {
-                        Label("No Devices", systemImage: "laptopcomputer.and.iphone")
+                        Label("No Devices", systemImage: SidebarItem.lan.systemImage)
                     } description: {
                         Text("LAN clients appear once they send traffic through this Mac.")
                     }
                 } else {
                     ContentUnavailableView {
-                        Label("LAN Off", systemImage: "laptopcomputer.and.iphone")
+                        Label("LAN Off", systemImage: SidebarItem.lan.systemImage)
                     } description: {
                         Text("Turn on Allow LAN to proxy other devices on this network.")
                     }
@@ -66,16 +67,14 @@ struct RulesPane: View {
         let rows = displayRules
         Group {
             if rows.isEmpty {
-                ContentUnavailableView {
-                    Label("No Rules", systemImage: SidebarItem.rules.systemImage)
-                } description: {
-                    Text(
-                        search.isEmpty
-                            ? (appModel.dashboard.profiles.lastError
-                                ?? "Import a profile, then press Set Active in Profiles.")
-                            : "No rules match this filter."
-                    )
-                }
+                ConsoleEmptyState(
+                    title: "No Rules",
+                    systemImage: SidebarItem.rules.systemImage,
+                    description: search.isEmpty
+                        ? (appModel.dashboard.profiles.lastError
+                            ?? "Import a profile, then set it active in Profiles.")
+                        : "No rules match this filter."
+                )
             } else {
                 Table(rows, selection: $selectedRuleID) {
                     TableColumn("#") { (row: DisplayRule) in
@@ -113,28 +112,27 @@ struct RulesPane: View {
                 }
             }
         }
-        .navigationTitle("Rules")
+        .navigationTitle("Rules \(rows.count)")
         .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button("Add Rule", systemImage: "plus") {
-                    editor = OverlayRule(type: .domainSuffix, payload: "", policy: "DIRECT")
+            ToolbarItem(placement: .primaryAction) {
+                IconControlGroup {
+                    Button("Add Rule", systemImage: "plus") {
+                        editor = OverlayRule(type: .domainSuffix, payload: "", policy: "DIRECT")
+                    }
+                    .disabled(appModel.dashboard.profiles.activeProfile == nil)
+                    .help("Add a local rule in front of the profile rules.")
+                    Button("Delete", systemImage: "minus") {
+                        deleteSelected()
+                    }
+                    .disabled(selectedLocalID == nil)
+                    .help("Delete")
                 }
-                .disabled(appModel.dashboard.profiles.activeProfile == nil)
-                .help("Add a local rule in front of the profile rules.")
-                Button("Delete", systemImage: "minus") {
-                    deleteSelected()
-                }
-                .disabled(selectedLocalID == nil)
             }
             ToolbarSpacer(.fixed, placement: .primaryAction)
             ToolbarItem(placement: .primaryAction) {
                 ToolbarSearchField(text: $search, prompt: "Search rules")
             }
-            ToolbarSpacer(.fixed, placement: .primaryAction)
-            ToolbarItemGroup(placement: .primaryAction) {
-                ErrorToolbarButton()
-                InspectorToolbarButton()
-            }
+            ConsoleInspectorToolbar()
         }
         .sheet(item: $editor) { rule in
             OverlayRuleEditor(
@@ -144,20 +142,6 @@ struct RulesPane: View {
             ) { saved in
                 upsertLocal(saved)
             }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            HStack {
-                Text("\(overlay.rules.count) local · \(rows.count) total")
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if let name = appModel.dashboard.profiles.activeProfileName {
-                    Text(name)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .font(.caption)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
         }
     }
 
@@ -243,105 +227,20 @@ private struct DisplayRule: Identifiable {
     var overlayID: UUID?
 }
 
-struct MorePane: View {
-    @Environment(AppModel.self) private var appModel
+struct ComingSoonPane: View {
+    var item: SidebarItem
 
     var body: some View {
-        moreGrid
-            .navigationTitle("More")
-    }
-
-    private var moreGrid: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                Grid(alignment: .topLeading, horizontalSpacing: 36, verticalSpacing: 28) {
-                    GridRow {
-                        LaunchTile(
-                            title: "Settings",
-                            subtitle: "Appearance and shortcuts.",
-                            systemImage: "slider.horizontal.3",
-                            tint: .indigo
-                        ) {
-                            appModel.presentedMoreSheet = .settings
-                        }
-                        LaunchTile(
-                            title: "Profiles",
-                            subtitle: "Subscriptions and local configs.",
-                            systemImage: "doc.text.fill",
-                            tint: .blue
-                        ) {
-                            appModel.presentedMoreSheet = .profiles
-                        }
-                        LaunchTile(
-                            title: "Events",
-                            subtitle: "Tunnel runtime log.",
-                            systemImage: "terminal.fill",
-                            tint: .teal
-                        ) {
-                            appModel.presentedMoreSheet = .events
-                        }
-                        LaunchTile(
-                            title: "Module",
-                            subtitle: "Overlay snippets on the active profile.",
-                            systemImage: "shippingbox.fill",
-                            tint: .orange,
-                            enabled: false
-                        )
-                    }
-                }
-                Divider()
-                Grid(alignment: .topLeading, horizontalSpacing: 36, verticalSpacing: 28) {
-                    GridRow {
-                        LaunchTile(
-                            title: "Scripts",
-                            subtitle: "Extend routing with JavaScript.",
-                            systemImage: "flask.fill",
-                            tint: .pink,
-                            enabled: false
-                        )
-                    }
-                }
-            }
-            .padding(32)
-            .frame(maxWidth: 920, alignment: .leading)
-        }
-    }
-}
-
-struct SettingsSheet: View {
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Settings")
-                    .font(.headline)
-                Text("Appearance and shortcuts.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 20)
-            SettingsForm()
-        }
-        .padding(.top, 20)
-        .frame(minWidth: 520, minHeight: 520)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            SheetActionBar(onDone: { dismiss() })
-                .background(Color(nsColor: .windowBackgroundColor))
-        }
+        ConsoleEmptyState(
+            title: item.title,
+            systemImage: item.systemImage,
+            description: item.placeholderSummary ?? "This page is not available yet."
+        )
+        .navigationTitle(item.title)
     }
 }
 
 struct SettingsPane: View {
-    var body: some View {
-        SettingsForm()
-            .navigationTitle("Settings")
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    }
-}
-
-private struct SettingsForm: View {
     @Environment(AppModel.self) private var appModel
 
     var body: some View {
@@ -349,19 +248,27 @@ private struct SettingsForm: View {
 
         Form {
             Section("Appearance") {
-                Toggle("Menu Bar Only", isOn: $appModel.menuBarOnly)
-                    .help("Hide the Dock icon and keep PrizmX in the menu bar.")
-                Text(
-                    "When enabled, PrizmX uses an accessory activation policy so it no longer occupies the Dock. Open the console from the menu-bar panel."
-                )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Toggle(isOn: $appModel.menuBarOnly) {
+                    Text("Menu Bar Only")
+                    Text("Hide the Dock icon and keep PrizmX in the menu bar.")
+                }
                 Picker("Connected Icon", selection: $appModel.menuBarConnectedStyle) {
                     ForEach(MenuBarConnectedStyle.allCases) { style in
                         Text(style.title).tag(style)
                     }
                 }
                 .help("Idle stays gray. This only changes the connected proxy icon.")
+            }
+
+            Section("Events") {
+                Picker(selection: $appModel.eventsLogLevel) {
+                    ForEach(TunnelLog.Level.allCases, id: \.self) { level in
+                        Text(level.title).tag(level)
+                    }
+                } label: {
+                    Text("Log Level")
+                    Text("Records this level and above. Clear Events to drop older lines.")
+                }
             }
 
             Section("Shortcuts") {
@@ -379,12 +286,25 @@ private struct SettingsForm: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
+        .navigationTitle("Settings")
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private func labeledShortcut(_ name: String, _ keys: String) -> some View {
         LabeledContent(name) {
             Text(keys)
                 .foregroundStyle(.secondary)
+        }
+    }
+}
+
+extension TunnelLog.Level {
+    var title: String {
+        switch self {
+        case .debug: "Debug"
+        case .info: "Info"
+        case .warn: "Warning"
+        case .error: "Error"
         }
     }
 }

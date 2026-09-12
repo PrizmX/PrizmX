@@ -4,22 +4,13 @@ import PrizmXServices
 
 /// Tunnel runtime events (App Group `logs/tunnel.log`), oldest first.
 /// Per-flow request data belongs to the Inspector, not this log.
-struct EventsSheet: View {
-    @Environment(\.dismiss) private var dismiss
+struct EventsPane: View {
     // Populated by the first `refresh()` — reading the log synchronously here
-    // would block the main actor while the sheet opens.
+    // would block the main actor while the pane appears.
     @State private var lines: [String] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Events")
-                    .font(.headline)
-                Text("Tunnel runtime log. Request-level data will appear in the Inspector.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 2) {
@@ -56,24 +47,26 @@ struct EventsSheet: View {
             )
         }
         .padding(20)
-        .frame(width: 640, height: 440)
         .background(Color(nsColor: .windowBackgroundColor))
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            SheetActionBar(onDone: { dismiss() }) {
-                Button("Show in Finder") {
-                    if let url = TunnelLog.fileURL() {
-                        NSWorkspace.shared.activateFileViewerSelecting([url])
+        .navigationTitle("Events")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                IconControlGroup {
+                    Button("Show in Finder", systemImage: "folder") {
+                        if let url = TunnelLog.fileURL() {
+                            NSWorkspace.shared.activateFileViewerSelecting([url])
+                        }
                     }
+                    .help("Show in Finder")
+                    Button("Clear", systemImage: "trash") {
+                        TunnelLog.clear()
+                        Task { await refresh() }
+                    }
+                    .help("Clear")
+                    .disabled(lines.isEmpty)
                 }
-                .buttonStyle(.bordered)
-                Button("Clear") {
-                    TunnelLog.clear()
-                    Task { await refresh() }
-                }
-                .buttonStyle(.bordered)
-                .disabled(lines.isEmpty)
             }
-            .background(Color(nsColor: .windowBackgroundColor))
+            ConsoleInspectorToolbar()
         }
         .task {
             await refresh()
@@ -115,5 +108,5 @@ struct EventsSheet: View {
 }
 
 #Preview("Events") {
-    EventsSheet()
+    EventsPane()
 }

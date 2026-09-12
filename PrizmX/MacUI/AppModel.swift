@@ -62,14 +62,6 @@ enum OutboundMode: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
-enum MoreSheet: String, Identifiable, Hashable {
-    case settings
-    case profiles
-    case events
-
-    var id: String { rawValue }
-}
-
 enum InspectorScope: String, CaseIterable, Identifiable {
     case recent
     case active
@@ -118,7 +110,11 @@ enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
     case lan
     case policies
     case rules
-    case more
+    case profiles
+    case events
+    case settings
+    case module
+    case scripts
 
     var id: String { rawValue }
 
@@ -129,7 +125,11 @@ enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
         case .lan: "LAN"
         case .policies: "Policies"
         case .rules: "Rules"
-        case .more: "More"
+        case .profiles: "Profiles"
+        case .events: "Events"
+        case .settings: "Settings"
+        case .module: "Module"
+        case .scripts: "Scripts"
         }
     }
 
@@ -140,7 +140,34 @@ enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
         case .lan: "laptopcomputer.and.iphone"
         case .policies: "arrow.triangle.branch"
         case .rules: "list.bullet.rectangle"
-        case .more: "ellipsis"
+        case .profiles: "doc.text"
+        case .events: "terminal"
+        case .settings: "gearshape"
+        case .module: "shippingbox"
+        case .scripts: "flask"
+        }
+    }
+
+    var isEnabled: Bool {
+        switch self {
+        case .module, .scripts: false
+        default: true
+        }
+    }
+
+    /// These panes append Error + Inspector after their own actions.
+    var ownsTrailingInspector: Bool {
+        switch self {
+        case .profiles, .policies, .rules, .events: true
+        default: false
+        }
+    }
+
+    var placeholderSummary: String? {
+        switch self {
+        case .module: "Overlay snippets on the active profile."
+        case .scripts: "Extend routing with JavaScript."
+        default: nil
         }
     }
 }
@@ -169,8 +196,13 @@ final class AppModel {
     var isMeasuringPathLatency = false
     private let mixedPortRuntime = SystemProxyRuntime()
 
+    var eventsLogLevel: TunnelLog.Level = .info {
+        didSet {
+            guard eventsLogLevel != oldValue else { return }
+            TunnelLog.minimumLevel = eventsLogLevel
+        }
+    }
     var selectedSidebarItem: SidebarItem = .home
-    var presentedMoreSheet: MoreSheet?
     var sessionStartedAt: Date?
     var inspectorScope: InspectorScope = .recent
     var inspectorGrouping: InspectorGrouping = .app
@@ -258,6 +290,7 @@ final class AppModel {
             allowLANEnabled = false
             menuBarConnectedStyle = .monochrome
             outboundMode = .rule
+            eventsLogLevel = .info
             sessionStartedAt = Date().addingTimeInterval(-3_723)
             trafficLedger = .preview
             internetLatency = 9
@@ -294,6 +327,7 @@ final class AppModel {
                 rawValue: UserDefaults.standard.string(forKey: DefaultsKey.menuBarConnectedStyle) ?? ""
             ) ?? .monochrome
             outboundMode = OutboundMode(rawValue: UserDefaults.standard.string(forKey: DefaultsKey.outboundMode) ?? "") ?? .rule
+            eventsLogLevel = TunnelLog.minimumLevel
             if dashboard.status == .connected {
                 sessionStartedAt = Date()
             }
@@ -563,10 +597,8 @@ extension AppModel {
         DockPolicy.apply(menuBarOnly: menuBarOnly)
     }
 
-    /// Settings is a sheet on the main window (no standalone Settings scene).
     func presentSettings(using openWindow: OpenWindowAction) {
-        presentMain(using: openWindow)
-        presentedMoreSheet = .settings
+        presentMain(using: openWindow, selecting: .settings)
     }
 
     func quit() {

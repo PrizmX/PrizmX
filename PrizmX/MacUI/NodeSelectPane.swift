@@ -70,7 +70,10 @@ struct NodeSelectPane: View {
 
             TableColumn("Latency") { node in
                 if appModel.nodeList.hasPingResult(for: node) {
-                    Text(latencyLabel(appModel.nodeList.latency(for: node)))
+                    let ms = appModel.nodeList.latency(for: node)
+                    Text(LatencyFormat.label(ms))
+                        .foregroundStyle(LatencyFormat.color(ms))
+                        .monospacedDigit()
                 } else if appModel.nodeList.isPinging {
                     ProgressView()
                         .controlSize(.small)
@@ -128,9 +131,6 @@ struct NodeSelectPane: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func latencyLabel(_ milliseconds: Double?) -> String {
-        LatencyFormat.label(milliseconds)
-    }
 }
 
 #Preview("Nodes") {

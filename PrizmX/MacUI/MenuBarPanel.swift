@@ -210,8 +210,7 @@ struct MenuBarPanel: View {
             Divider()
 
             Button {
-                appModel.presentMain(using: openWindow, selecting: .more)
-                appModel.presentedMoreSheet = .profiles
+                appModel.presentMain(using: openWindow, selecting: .profiles)
             } label: {
                 LabeledContent("Profile", value: appModel.dashboard.activeProfileName)
             }

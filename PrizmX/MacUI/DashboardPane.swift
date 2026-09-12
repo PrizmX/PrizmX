@@ -283,11 +283,14 @@ struct HomePane: View {
         let profile = appModel.dashboard.profiles.activeProfile
         return ProfileCard(
             name: profile?.name,
-            isSubscription: profile?.subscriptionURL != nil,
+            isSubscription: profile?.isSubscription == true,
             updatedText: relativeUpdate(profile?.lastUpdated),
+            expiresText: profile?.expiresAt.map { $0.formatted(date: .abbreviated, time: .omitted) },
+            usedBytes: profile?.usedBytes ?? 0,
+            totalBytes: profile?.totalBytes ?? 0,
             formatLabel: profile?.formatLabel ?? "—"
         ) {
-            if let profile, profile.subscriptionURL != nil {
+            if let profile, profile.isSubscription {
                 WidgetIconButton(systemImage: "arrow.clockwise", help: "Update subscription") {
                     Task { try? await appModel.dashboard.profiles.refreshSubscription(id: profile.id) }
                 }
@@ -400,11 +403,11 @@ struct HomePane: View {
         return appModel.nodeList.filteredNodes.first { $0.id == id }
     }
 
-    /// Same glyphs as More → Profiles: local file vs subscription URL.
+    /// Local file vs subscription URL, matching the Profiles table.
     private var profileHeaderIcon: String {
         let profile = appModel.dashboard.profiles.activeProfile
         if profile == nil { return "doc" }
-        return profile?.subscriptionURL == nil ? "doc.fill" : "link.circle.fill"
+        return profile?.isSubscription == true ? "link.circle" : "doc.text"
     }
 
     private var outboundHeadline: String {

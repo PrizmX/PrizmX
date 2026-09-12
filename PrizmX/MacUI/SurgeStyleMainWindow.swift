@@ -1,10 +1,9 @@
 import AppKit
 import SwiftUI
 import PrizmXServices
-import PrizmXUIComponents
 import PrizmXUIEngine
 
-/// Console: Home + Sources / Routing + More, Inspector pops out.
+/// Console: Home + Sources / Routing / Extend / System, Inspector pops out.
 struct SurgeStyleMainWindow: View {
     @Environment(AppModel.self) private var appModel
 
@@ -12,15 +11,7 @@ struct SurgeStyleMainWindow: View {
         @Bindable var appModel = appModel
 
         NavigationSplitView {
-            #if DEBUG
-            if UserDefaults.standard.bool(forKey: "PRIZMX_BARE_SIDEBAR") {
-                plainSidebar
-            } else {
-                fullSidebar
-            }
-            #else
-            fullSidebar
-            #endif
+            sidebarColumn
         } detail: {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -28,23 +19,11 @@ struct SurgeStyleMainWindow: View {
         .frame(minWidth: 900, minHeight: 520)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .toolbar {
-            if appModel.selectedSidebarItem != .rules && appModel.selectedSidebarItem != .policies {
+            if !appModel.selectedSidebarItem.ownsTrailingInspector {
                 ToolbarItemGroup(placement: .primaryAction) {
                     ErrorToolbarButton()
                     InspectorToolbarButton()
                 }
-            }
-        }
-        .sheet(item: $appModel.presentedMoreSheet) { sheet in
-            switch sheet {
-            case .settings:
-                SettingsSheet()
-                    .environment(appModel)
-            case .profiles:
-                ProfilesSheet()
-                    .environment(appModel)
-            case .events:
-                EventsSheet()
             }
         }
         .onChange(of: appModel.dashboard.status) { _, _ in
@@ -57,6 +36,19 @@ struct SurgeStyleMainWindow: View {
 
     // MARK: - Sidebar
 
+    @ViewBuilder
+    private var sidebarColumn: some View {
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "PRIZMX_BARE_SIDEBAR") {
+            plainSidebar
+        } else {
+            fullSidebar
+        }
+        #else
+        fullSidebar
+        #endif
+    }
+
     private var fullSidebar: some View {
         @Bindable var appModel = appModel
         return List(selection: $appModel.selectedSidebarItem) {
@@ -67,18 +59,24 @@ struct SurgeStyleMainWindow: View {
                 sidebarRow(.lan)
             }
             Section("Routing") {
+                sidebarRow(.profiles)
                 sidebarRow(.policies)
                 sidebarRow(.rules)
             }
+            Section("Extend") {
+                sidebarRow(.module)
+                sidebarRow(.scripts)
+            }
+            Section("System") {
+                sidebarRow(.settings)
+                sidebarRow(.events)
+            }
         }
         .listStyle(.sidebar)
-        .safeAreaBar(edge: .bottom) {
-            moreBar
-        }
         .navigationSplitViewColumnWidth(min: 180, ideal: 208, max: 260)
     }
 
-    /// Debug bisection (`PRIZMX_BARE_SIDEBAR=1`): no selection, no More bar.
+    /// Debug bisection (`PRIZMX_BARE_SIDEBAR=1`): no selection.
     private var plainSidebar: some View {
         List {
             Text("Home")
@@ -91,28 +89,8 @@ struct SurgeStyleMainWindow: View {
     private func sidebarRow(_ item: SidebarItem) -> some View {
         Label(item.title, systemImage: item.systemImage)
             .tag(item)
-    }
-
-    private var moreBar: some View {
-        Button {
-            appModel.selectedSidebarItem = .more
-        } label: {
-            Label(SidebarItem.more.title, systemImage: SidebarItem.more.systemImage)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(appModel.selectedSidebarItem == .more ? Color.white : Color.primary)
-        .background {
-            if appModel.selectedSidebarItem == .more {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(WidgetChrome.accent)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.bottom, 8)
+            .disabled(!item.isEnabled)
+            .foregroundStyle(item.isEnabled ? Color.primary : Color.secondary)
     }
 
     // MARK: - Detail
@@ -143,8 +121,14 @@ struct SurgeStyleMainWindow: View {
             PoliciesPane()
         case .rules:
             RulesPane()
-        case .more:
-            MorePane()
+        case .profiles:
+            ProfilesPane()
+        case .events:
+            EventsPane()
+        case .settings:
+            SettingsPane()
+        case .module, .scripts:
+            ComingSoonPane(item: appModel.selectedSidebarItem)
         }
     }
 }

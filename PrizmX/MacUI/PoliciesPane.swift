@@ -19,42 +19,59 @@ struct PoliciesPane: View {
         let _ = appModel.dashboard.profiles.nodeManager
         let groups = nodeList.policyGroupSections
 
-        HSplitView {
-            groupList(groups)
-                .frame(minWidth: 180, idealWidth: 220, maxWidth: 320)
-            memberTable(groups)
+        Group {
+            if groups.isEmpty {
+                ConsoleEmptyState(
+                    title: "No Policies",
+                    systemImage: SidebarItem.policies.systemImage,
+                    description: appModel.dashboard.profiles.lastError
+                        ?? "Import a profile, then set it active in Profiles."
+                )
+            } else {
+                HSplitView {
+                    groupList(groups)
+                        .frame(minWidth: 200, idealWidth: 260, maxWidth: 360)
+                    memberTable(groups)
+                }
+                .background(Color(nsColor: .windowBackgroundColor))
+            }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
         .navigationTitle("Policies")
         .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button("Add Group", systemImage: "plus") {
-                    editor = OverlayGroup(name: "Local", members: ["DIRECT"])
-                }
-                .disabled(appModel.dashboard.profiles.activeProfile == nil)
-                .help("Add a local policy group. Remote groups stay read-only.")
-                Button("Delete", systemImage: "minus") {
-                    deleteSelectedLocalGroup()
-                }
-                .disabled(selectedLocalGroup == nil)
-                if nodeList.isPinging {
-                    Button("Stop") { nodeList.cancelPing() }
-                } else {
-                    Button("Ping All", systemImage: "gauge.with.dots.needle.67percent") {
-                        Task { await nodeList.pingAllNodes() }
+            ToolbarItem(placement: .primaryAction) {
+                IconControlGroup {
+                    Button("Add Group", systemImage: "plus") {
+                        editor = OverlayGroup(name: "Local", members: ["DIRECT"])
                     }
-                    .help("Concurrent delay test")
+                    .disabled(appModel.dashboard.profiles.activeProfile == nil)
+                    .help("Add a local policy group. Remote groups stay read-only.")
+                    Button("Delete", systemImage: "minus") {
+                        deleteSelectedLocalGroup()
+                    }
+                    .disabled(selectedLocalGroup == nil)
+                    .help("Delete")
                 }
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button("Ping All", systemImage: "gauge.with.dots.needle.67percent") {
+                    guard !nodeList.isPinging else { return }
+                    Task { await nodeList.pingAllNodes() }
+                }
+                .labelStyle(.iconOnly)
+                .symbolRenderingMode(.hierarchical)
+                .symbolEffect(
+                    .variableColor.iterative.dimInactiveLayers,
+                    options: .repeating.speed(0.8),
+                    isActive: nodeList.isPinging
+                )
+                .help(nodeList.isPinging ? "Testing delay…" : "Concurrent delay test")
+                .allowsHitTesting(!nodeList.isPinging)
             }
             ToolbarSpacer(.fixed, placement: .primaryAction)
             ToolbarItem(placement: .primaryAction) {
                 ToolbarSearchField(text: $nodeList.searchText, prompt: "Filter nodes")
             }
-            ToolbarSpacer(.fixed, placement: .primaryAction)
-            ToolbarItemGroup(placement: .primaryAction) {
-                ErrorToolbarButton()
-                InspectorToolbarButton()
-            }
+            ConsoleInspectorToolbar()
         }
         .sheet(item: $editor) { group in
             OverlayGroupEditor(
@@ -77,43 +94,34 @@ struct PoliciesPane: View {
     }
 
     private func groupList(_ groups: [PolicyGroupSection]) -> some View {
-        Group {
-            if groups.isEmpty {
-                ContentUnavailableView {
-                    Label("No Policies", systemImage: SidebarItem.policies.systemImage)
-                } description: {
-                    Text(appModel.dashboard.profiles.lastError
-                         ?? "Import a profile, then press Set Active in Profiles.")
-                }
-            } else {
-                List(groups, selection: $selectedGroupID) { group in
-                    Label {
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
-                                Text(group.title)
-                                if isLocal(group.id) {
-                                    Text("Local")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
+        Table(groups, selection: $selectedGroupID) {
+            TableColumn("Group") { (group: PolicyGroupSection) in
+                HStack(alignment: .center, spacing: 8) {
+                    PolicyGroupIcon(
+                        url: appModel.dashboard.profiles.nodeManager?.group(named: group.id)?.iconURL
+                    )
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(group.title)
+                            if isLocal(group.id) {
+                                Text("Local")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
                             }
-                            Text(groupSubtitle(group))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
                         }
-                    } icon: {
-                        PolicyGroupIcon(url: appModel.dashboard.profiles.nodeManager?.group(named: group.id)?.iconURL)
-                    }
-                    .tag(group.id)
-                    .contextMenu {
-                        if let local = overlay.groups.first(where: { $0.name == group.id }) {
-                            Button("Edit…") { editor = local }
-                            Button("Delete", role: .destructive) { deleteLocal(local.id) }
-                        }
+                        Text(groupSubtitle(group))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
+            }
+        }
+        .tableStyle(.inset)
+        .contextMenu(forSelectionType: String.self) { ids in
+            if let id = ids.first,
+               let local = overlay.groups.first(where: { $0.name == id }) {
+                Button("Edit…") { editor = local }
+                Button("Delete", role: .destructive) { deleteLocal(local.id) }
             }
         }
     }
@@ -147,11 +155,15 @@ struct PoliciesPane: View {
                     }
                     TableColumn("Type") { member in
                         Text(member.kindLabel)
+                            .foregroundStyle(member.isUnsupported ? Color.orange : Color.primary)
                     }
-                    .width(90)
+                    .width(110)
                     TableColumn("Latency") { member in
                         if let node = member.node, appModel.nodeList.hasPingResult(for: node) {
-                            Text(latencyLabel(appModel.nodeList.latency(for: node)))
+                            let ms = appModel.nodeList.latency(for: node)
+                            Text(LatencyFormat.label(ms))
+                                .foregroundStyle(LatencyFormat.color(ms))
+                                .monospacedDigit()
                         } else if member.node != nil, appModel.nodeList.isPinging {
                             ProgressView().controlSize(.small)
                         } else {
@@ -164,14 +176,17 @@ struct PoliciesPane: View {
                 .contextMenu(forSelectionType: String.self) { ids in
                     if let id = ids.first, let member = members.first(where: { $0.id == id }) {
                         Button("Select") { selectMember(member) }
+                            .disabled(member.isUnsupported)
                         if let node = member.node {
                             Button("Ping") { Task { await appModel.nodeList.ping(node) } }
                         }
                     }
-                }
-                .onChange(of: selectedNodeID) { _, newValue in
-                    guard let newValue, let member = members.first(where: { $0.id == newValue }) else { return }
-                    selectMember(member)
+                } primaryAction: { ids in
+                    if let id = ids.first,
+                       let member = members.first(where: { $0.id == id }),
+                       !member.isUnsupported {
+                        selectMember(member)
+                    }
                 }
             }
         }
@@ -191,9 +206,7 @@ struct PoliciesPane: View {
     }
 
     private func selectMember(_ member: PolicyMember) {
-        guard let groupID = selectedGroupID else { return }
-        // Persists PolicySelectionStore, updates the in-app NodeManager, and
-        // notifies the running tunnel over IPC.
+        guard !member.isUnsupported, let groupID = selectedGroupID else { return }
         appModel.selectPolicyMember(member.id, inGroup: groupID)
     }
 
@@ -250,10 +263,6 @@ struct PoliciesPane: View {
             return "\(mode.displayName) · \(count)"
         }
         return count
-    }
-
-    private func latencyLabel(_ milliseconds: Double?) -> String {
-        LatencyFormat.label(milliseconds)
     }
 }
 
