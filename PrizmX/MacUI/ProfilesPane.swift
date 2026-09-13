@@ -20,6 +20,7 @@ struct ProfilesPane: View {
     @State private var urlString = ""
     @State private var isImportingURL = false
     @State private var errorMessage: String?
+    @State private var urlImportError: String?
 
     var body: some View {
         Group {
@@ -46,6 +47,7 @@ struct ProfilesPane: View {
                         Button("From URL…") {
                             urlName = ""
                             urlString = ""
+                            urlImportError = nil
                             isURLPresented = true
                         }
                     } label: {
@@ -108,11 +110,12 @@ struct ProfilesPane: View {
         } message: {
             Text(errorMessage ?? "")
         }
-        .sheet(isPresented: $isURLPresented) {
+        .sheet(isPresented: $isURLPresented, onDismiss: { urlImportError = nil }) {
             InstallFromURLSheet(
                 name: $urlName,
                 urlString: $urlString,
                 isImporting: isImportingURL,
+                errorMessage: urlImportError,
                 onCancel: { isURLPresented = false },
                 onInstall: { Task { await importFromURL() } }
             )
@@ -128,17 +131,22 @@ struct ProfilesPane: View {
     private var profileTable: some View {
         Table(store.profiles, selection: $selectedID) {
             TableColumn("Item") { (profile: ProxyProfile) in
+                let isActive = profile.id == store.activeProfileID
                 Label {
                     Text(profile.name)
+                        .fontWeight(isActive ? .semibold : .regular)
                 } icon: {
                     Image(systemName: profile.isSubscription ? "link.circle" : "doc.text")
                         .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
                 }
             }
             TableColumn("Kind") { profile in
+                let isActive = profile.id == store.activeProfileID
                 Text(ProfileListFormat.kind(profile, activeID: store.activeProfileID))
+                    .fontWeight(isActive ? .semibold : .regular)
             }
-            .width(110)
+            .width(150)
             TableColumn("Updated") { profile in
                 Text(ProfileListFormat.updated(profile))
                     .foregroundStyle(profile.lastUpdated == nil ? .tertiary : .primary)
@@ -255,7 +263,7 @@ struct ProfilesPane: View {
     private func importFromURL() async {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed) else {
-            errorMessage = "Enter a valid URL."
+            urlImportError = "Enter a valid URL."
             return
         }
         isImportingURL = true
@@ -266,11 +274,11 @@ struct ProfilesPane: View {
             request.setValue("PrizmX/\(version)", forHTTPHeaderField: "User-Agent")
             let (data, response) = try await URLSession.shared.data(for: request)
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                errorMessage = "Subscription download failed (HTTP \(http.statusCode))."
+                urlImportError = ProfileStoreError.subscriptionFailed(http.statusCode).localizedDescription
                 return
             }
             guard let text = ProfileStore.decodeSubscriptionBody(data), !text.isEmpty else {
-                errorMessage = "The download did not contain a readable profile."
+                urlImportError = ProfileStoreError.unreadableSubscription.localizedDescription
                 return
             }
             let name = urlName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -283,21 +291,24 @@ struct ProfilesPane: View {
             profile.applySubscriptionUserInfo(from: response)
             try store.upsert(profile)
             selectedID = profile.id
+            urlImportError = nil
             isURLPresented = false
         } catch {
-            errorMessage = error.localizedDescription
+            urlImportError = error.localizedDescription
         }
     }
 }
 
 private enum ProfileListFormat {
     static func kind(_ profile: ProxyProfile, activeID: UUID?) -> String {
-        if profile.id == activeID { return "Active" }
+        let label: String
         switch profile.format {
-        case .clash: return "Clash"
-        case .singbox: return "sing-box"
-        case .unknown: return profile.isSubscription ? "Subscription" : "Local"
+        case .clash: label = "Clash"
+        case .singbox: label = "sing-box"
+        case .unknown: label = profile.isSubscription ? "Subscription" : "Local"
         }
+        if profile.id == activeID { return "\(label) (Active)" }
+        return label
     }
 
     static func updated(_ profile: ProxyProfile) -> String {
@@ -413,6 +424,7 @@ private struct InstallFromURLSheet: View {
     @Binding var name: String
     @Binding var urlString: String
     var isImporting: Bool
+    var errorMessage: String?
     var onCancel: () -> Void
     var onInstall: () -> Void
 
@@ -425,6 +437,12 @@ private struct InstallFromURLSheet: View {
                     .textContentType(.URL)
             }
             .formStyle(.grouped)
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
         }
         .padding(20)
         .frame(minWidth: 520)
