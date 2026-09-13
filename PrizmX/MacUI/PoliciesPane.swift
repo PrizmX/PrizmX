@@ -33,7 +33,6 @@ struct PoliciesPane: View {
                         .frame(minWidth: 200, idealWidth: 260, maxWidth: 360)
                     memberTable(groups)
                 }
-                .background(Color(nsColor: .windowBackgroundColor))
             }
         }
         .navigationTitle("Policies")

@@ -54,7 +54,6 @@ struct HomePane: View {
             .scrollContentBackground(.hidden)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(WidgetChrome.page)
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.width
         } action: { width in
@@ -353,19 +352,13 @@ struct HomePane: View {
 
     private var lanWidget: some View {
         @Bindable var model = appModel
-        let address: String
-        if !model.allowLANEnabled {
-            address = "Off"
-        } else if !model.systemProxyEnabled {
-            address = "Enable Proxy"
-        } else {
-            address = appModel.networkLink.lanIPv4
-        }
+        let listen = appModel.inboundListen
         return LANCard(
             isOn: $model.allowLANEnabled,
-            address: address,
-            port: TunnelProviderKeys.defaultMixedPort,
-            deviceCount: 0
+            address: appModel.lanCardAddress,
+            httpPort: Int(listen.systemProxyHTTPPort),
+            socksPort: Int(listen.systemProxySOCKSPort),
+            deviceCount: appModel.lanClientRows.count
         )
     }
 

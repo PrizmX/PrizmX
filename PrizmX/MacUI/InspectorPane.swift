@@ -18,14 +18,36 @@ struct InspectorRequest: Identifiable, Hashable, Sendable {
     var clientEnd: String
     var remoteEnd: String
     var port: UInt16
+    var isLANClient: Bool
+    var lanAddress: String?
+    var placeholderSystemImage: String?
 
-    init(flow: FlowRecord) {
+    init(flow: FlowRecord, lanDevice: LANDevice? = nil) {
         id = flow.id
         serial = flow.serial
         timestamp = flow.startedAt
-        appName = flow.attribution?.processName ?? "—"
-        appBundleID = flow.attribution?.bundleID
-        appExecutablePath = flow.attribution?.executablePath
+        if let lanDevice {
+            appName = lanDevice.name
+            appBundleID = nil
+            appExecutablePath = nil
+            isLANClient = true
+            lanAddress = lanDevice.address
+            placeholderSystemImage = lanDevice.kind.systemImage
+        } else if let host = AppModel.lanClientAddress(flow.sourceHost) {
+            appName = host
+            appBundleID = nil
+            appExecutablePath = nil
+            isLANClient = true
+            lanAddress = host
+            placeholderSystemImage = LANDevice.Kind.unknown.systemImage
+        } else {
+            appName = flow.attribution?.processName ?? "—"
+            appBundleID = flow.attribution?.bundleID
+            appExecutablePath = flow.attribution?.executablePath
+            isLANClient = false
+            lanAddress = nil
+            placeholderSystemImage = nil
+        }
         closed = flow.closed
         policy = flow.via
         rule = flow.rule
@@ -40,6 +62,13 @@ struct InspectorRequest: Identifiable, Hashable, Sendable {
 
     var idLabel: String {
         serial.map { "\($0)" } ?? "—"
+    }
+
+    /// Stable Apps / Inspector grouping key (bundle ID when present).
+    var accountingKey: String {
+        if let lanAddress { return "lan:\(lanAddress)" }
+        if let appBundleID, !appBundleID.isEmpty { return appBundleID }
+        return appName
     }
 
     /// Host without port, for Host grouping.
@@ -117,6 +146,7 @@ struct InspectorGroupRow: Identifiable, Hashable {
     var count: Int
     var bundleID: String?
     var executablePath: String?
+    var placeholderSystemImage: String?
 }
 
 /// Request inspector: group list + request table.
@@ -125,9 +155,6 @@ struct InspectorPane: View {
     @State private var sortOrder: [KeyPathComparator<InspectorRequest>] = [
         KeyPathComparator(\InspectorRequest.timestamp, order: .reverse)
     ]
-    /// Empty string is All Apps / All Hosts.
-    @State private var selectedGroup = ""
-
     var body: some View {
         @Bindable var appModel = appModel
 
@@ -163,18 +190,13 @@ struct InspectorPane: View {
         }
         .searchable(text: $appModel.inspectorFilter, prompt: "Filter")
         .onChange(of: appModel.inspectorGrouping) { _, _ in
-            selectedGroup = ""
-        }
-        .onChange(of: groupKeys) { _, keys in
-            if !selectedGroup.isEmpty, !keys.contains(selectedGroup) {
-                selectedGroup = ""
-            }
+            appModel.inspectorSelectedGroup = ""
         }
     }
 
     private var groupSidebar: some View {
         @Bindable var appModel = appModel
-        return List(selection: $selectedGroup) {
+        return List(selection: $appModel.inspectorSelectedGroup) {
             Label(allGroupTitle, systemImage: "tray.2")
                 .badge(appModel.inspectorRequests.count)
                 .tag("")
@@ -228,11 +250,17 @@ struct InspectorPane: View {
             .width(150)
             TableColumn("App", value: \.appName) { item in
                 HStack(spacing: 6) {
-                    AppIconView(
-                        bundleID: item.appBundleID,
-                        executablePath: item.appExecutablePath,
-                        size: 16
-                    )
+                    if item.isLANClient {
+                        Image(systemName: item.placeholderSystemImage ?? LANDevice.Kind.unknown.systemImage)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 16, height: 16)
+                    } else {
+                        AppIconView(
+                            bundleID: item.appBundleID,
+                            executablePath: item.appExecutablePath,
+                            size: 16
+                        )
+                    }
                     Text(item.appName)
                         .lineLimit(1)
                 }
@@ -286,15 +314,12 @@ struct InspectorPane: View {
 
     private var displayedRequests: [InspectorRequest] {
         let rows = appModel.inspectorRequests
-        guard !selectedGroup.isEmpty else { return rows }
+        let selected = appModel.inspectorSelectedGroup
+        guard !selected.isEmpty else { return rows }
         return rows.filter {
-            let key = appModel.inspectorGrouping == .app ? $0.appName : $0.hostLabel
-            return key == selectedGroup
+            let key = appModel.inspectorGrouping == .app ? $0.accountingKey : $0.hostLabel
+            return key == selected
         }
-    }
-
-    private var groupKeys: Set<String> {
-        Set(appModel.inspectorGroupRows.map(\.id))
     }
 
     private var allGroupTitle: String {
@@ -302,7 +327,7 @@ struct InspectorPane: View {
     }
 
     private var emptyDescription: String {
-        if !selectedGroup.isEmpty {
+        if !appModel.inspectorSelectedGroup.isEmpty {
             return "No requests in this group."
         }
         return appModel.inspectorScope == .active
@@ -312,7 +337,11 @@ struct InspectorPane: View {
 
     @ViewBuilder
     private func groupIcon(_ row: InspectorGroupRow) -> some View {
-        if appModel.inspectorGrouping == .app, row.title != "—" {
+        if let placeholder = row.placeholderSystemImage {
+            Image(systemName: placeholder)
+                .foregroundStyle(.secondary)
+                .frame(width: 16, height: 16)
+        } else if appModel.inspectorGrouping == .app, row.title != "—" {
             AppIconView(bundleID: row.bundleID, executablePath: row.executablePath, size: 16)
         } else {
             Image(systemName: appModel.inspectorGrouping == .app ? "app" : "globe")

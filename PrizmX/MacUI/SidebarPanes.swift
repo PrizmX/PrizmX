@@ -4,59 +4,6 @@ import PrizmXProtocols
 import PrizmXServices
 import PrizmXUIEngine
 
-struct AppsPane: View {
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                MetricCard(title: "Traffic", systemImage: "chart.bar") {
-                    TrafficBarChart(
-                        categories: [],
-                        emptySystemImage: SidebarItem.apps.systemImage,
-                        emptyDescription: "Process-level traffic appears when TUN captures local apps."
-                    )
-                    .frame(minHeight: 180)
-                }
-            }
-            .padding(20)
-        }
-        .navigationTitle("Apps")
-    }
-}
-
-struct LANPane: View {
-    @Environment(AppModel.self) private var appModel
-
-    var body: some View {
-        @Bindable var appModel = appModel
-
-        Form {
-            Section {
-                Toggle("Allow LAN", isOn: $appModel.allowLANEnabled)
-                Text("Other devices can use this Mac as HTTP/SOCKS.")
-                    .foregroundStyle(.secondary)
-            }
-            Section {
-                if appModel.allowLANEnabled {
-                    ContentUnavailableView {
-                        Label("No Devices", systemImage: SidebarItem.lan.systemImage)
-                    } description: {
-                        Text("LAN clients appear once they send traffic through this Mac.")
-                    }
-                } else {
-                    ContentUnavailableView {
-                        Label("LAN Off", systemImage: SidebarItem.lan.systemImage)
-                    } description: {
-                        Text("Turn on Allow LAN to proxy other devices on this network.")
-                    }
-                }
-            }
-        }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
-        .navigationTitle("LAN")
-    }
-}
-
 struct RulesPane: View {
     @Environment(AppModel.self) private var appModel
     @State private var search = ""

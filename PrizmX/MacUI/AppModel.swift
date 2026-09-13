@@ -199,16 +199,27 @@ final class AppModel {
     var inspectorScope: InspectorScope = .recent
     var inspectorGrouping: InspectorGrouping = .app
     var inspectorFilter = ""
+    /// Empty string is All Apps / All Hosts. App grouping uses `accountingKey`.
+    var inspectorSelectedGroup = ""
     var selectedInspectorRequestID: InspectorRequest.ID?
     var inspectorActiveFlows: [FlowRecord] = []
     var inspectorRecentFlows: [FlowRecord] = []
+    var appByteRates: [String: Double] = [:]
     @ObservationIgnored
     private var inspectorSerials: [UUID: UInt64] = [:]
     @ObservationIgnored
     private var inspectorNextSerial: UInt64 = 0
+    @ObservationIgnored
+    var lastAppByteSample: (at: Date, bytes: [String: TrafficByteCount])?
     var egressIP = "—"
     var egressInfo: EgressIPInfo?
     var egressLookupError: String?
+    var mixedPortListenError: String?
+    /// Parsed once per profile apply. Home/LAN must not YAML-parse every tick.
+    var inboundListen = InboundListenConfig.appDefault
+    var lanDeviceByAddress: [String: LANDevice] = [:]
+    @ObservationIgnored
+    var lanResolveAttempted = Set<String>()
 
     var outboundMode: OutboundMode {
         didSet {
@@ -291,19 +302,12 @@ final class AppModel {
             trafficLedger = .preview
             internetLatency = 9
             dnsLatency = 6
-            inspectorRecentFlows = [
-                FlowRecord(
-                    startedAt: Date().addingTimeInterval(-8),
-                    endpoint: Endpoint(domain: "github.com", port: 443),
-                    via: "Proxies",
-                    uplinkBytes: 12_000,
-                    downlinkBytes: 180_000,
-                    milliseconds: 1_840,
-                    clientEnd: "eof",
-                    remoteEnd: "eof",
-                    rule: "DOMAIN-SUFFIX,github.com",
-                    serial: 1
-                )
+            let mock = MockTrafficGenerator.metrics()
+            inspectorActiveFlows = mock.activeFlows
+            inspectorRecentFlows = mock.recentFlows
+            appByteRates = [
+                "com.apple.Safari": 86_000,
+                "com.apple.Music": 2_400
             ]
         } else {
             // Open-core Developer ID system extension: sendProviderMessage is
@@ -357,10 +361,11 @@ final class AppModel {
             if TunnelLifecycleStore.stopWasUserInitiated() {
                 tunModeEnabled = false
                 UserDefaults.standard.set(false, forKey: DefaultsKey.tunModeEnabled)
-            } else if tunModeEnabled || systemProxyEnabled {
+            } else if tunModeEnabled || systemProxyEnabled || allowLANEnabled {
                 Task { await applyTakeover() }
             }
             persistOutboundMode()
+            refreshInboundListen()
         }
     }
 
@@ -372,7 +377,7 @@ final class AppModel {
 
     func applyLaunchPolicy() {
         DockPolicy.apply(menuBarOnly: menuBarOnly)
-        if !systemProxyEnabled {
+        if !systemProxyEnabled && !allowLANEnabled {
             mixedPortRuntime.shutdown()
         }
     }
@@ -396,10 +401,25 @@ final class AppModel {
                 guard let self, !Task.isCancelled else { return }
                 let metrics = self.dashboard.vpn.lastMetrics
                 self.trafficLedger.ingest(metrics)
+                self.ingestAppByteRates(metrics)
                 self.rememberInspectorSerials(metrics.activeFlows + metrics.recentFlows)
-                self.inspectorActiveFlows = metrics.activeFlows
-                self.inspectorRecentFlows = metrics.recentFlows
+                if self.inspectorActiveFlows != metrics.activeFlows {
+                    self.inspectorActiveFlows = metrics.activeFlows
+                }
+                if self.inspectorRecentFlows != metrics.recentFlows {
+                    self.inspectorRecentFlows = metrics.recentFlows
+                }
+                self.noteLANDevices(in: metrics.activeFlows + metrics.recentFlows)
             }
+        }
+    }
+
+    func refreshInboundListen() {
+        let next = InboundListenConfig.parse(
+            from: dashboard.profiles.activeProfile?.rawConfig
+        )
+        if next != inboundListen {
+            inboundListen = next
         }
     }
 
@@ -437,7 +457,11 @@ final class AppModel {
     var inspectorRequests: [InspectorRequest] {
         let flows = inspectorScope == .active ? inspectorActiveFlows : inspectorRecentFlows
         var rows = flows.map { flow -> InspectorRequest in
-            var request = InspectorRequest(flow: flow)
+            let host = AppModel.lanClientAddress(flow.sourceHost)
+            var request = InspectorRequest(
+                flow: flow,
+                lanDevice: host.flatMap { lanDeviceByAddress[$0] }
+            )
             if request.serial == nil {
                 request.serial = inspectorSerials[flow.id]
             }
@@ -486,21 +510,26 @@ final class AppModel {
     /// Sidebar group counts for App / Host mode.
     var inspectorGroupRows: [InspectorGroupRow] {
         var counts: [String: Int] = [:]
-        var icons: [String: (bundleID: String?, path: String?)] = [:]
+        var titles: [String: String] = [:]
+        var icons: [String: (bundleID: String?, path: String?, placeholder: String?)] = [:]
         for request in inspectorRequests {
-            let key = inspectorGrouping == .app ? request.appName : request.hostLabel
+            let key = inspectorGrouping == .app ? request.accountingKey : request.hostLabel
             counts[key, default: 0] += 1
+            if titles[key] == nil {
+                titles[key] = inspectorGrouping == .app ? request.appName : key
+            }
             if icons[key] == nil {
-                icons[key] = (request.appBundleID, request.appExecutablePath)
+                icons[key] = (request.appBundleID, request.appExecutablePath, request.placeholderSystemImage)
             }
         }
         return counts.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }.map { key in
             InspectorGroupRow(
                 id: key,
-                title: key,
+                title: titles[key] ?? key,
                 count: counts[key] ?? 0,
                 bundleID: icons[key]?.bundleID,
-                executablePath: icons[key]?.path
+                executablePath: icons[key]?.path,
+                placeholderSystemImage: icons[key]?.placeholder
             )
         }
     }
@@ -521,7 +550,7 @@ final class AppModel {
     }
 
     private func reloadTunnelForOverlay() async {
-        guard tunModeEnabled || systemProxyEnabled else { return }
+        guard tunModeEnabled || systemProxyEnabled || allowLANEnabled else { return }
         mixedPortRuntime.invalidate()
         if isVPNOn {
             dashboard.vpn.stopVPN()
@@ -547,10 +576,12 @@ final class AppModel {
         }
     }
 
-    /// TUN → Packet Tunnel (FakeIP). System Proxy → mixed-port in this process.
+    /// TUN → Packet Tunnel (FakeIP). System Proxy / Allow LAN → mixed-port
+    /// in this process. Allow LAN can listen without setting system proxy.
     func applyTakeover() async {
         let config = dashboard.profiles.activeProfile?.rawConfig ?? VPNManager.defaultDirectConfig
         let overlay = dashboard.profiles.overlay
+        refreshInboundListen()
         if tunModeEnabled {
             do {
                 try await TunnelSystemExtension.activate()
@@ -573,18 +604,22 @@ final class AppModel {
         } else {
             dashboard.vpn.stopVPN()
         }
-        if systemProxyEnabled {
+        if systemProxyEnabled || allowLANEnabled {
             do {
                 try await mixedPortRuntime.apply(
                     configText: config,
                     overlay: overlay,
-                    allowLAN: allowLANEnabled
+                    allowLAN: allowLANEnabled,
+                    setSystemProxy: systemProxyEnabled
                 )
+                mixedPortListenError = nil
             } catch {
-                TunnelLog.write(.error, "system proxy mixed-port failed: \(error.localizedDescription)")
+                mixedPortListenError = error.localizedDescription
+                TunnelLog.write(.error, "mixed-port failed: \(error.localizedDescription)")
             }
         } else {
             mixedPortRuntime.shutdown()
+            mixedPortListenError = nil
         }
         scheduleEgressRefresh()
     }
@@ -620,6 +655,14 @@ extension AppModel {
         openWindow(id: AppWindowID.inspector)
         NSApp.activate(ignoringOtherApps: true)
         DockPolicy.apply(menuBarOnly: menuBarOnly)
+    }
+
+    /// Opens Inspector grouped by App. `key` is an accounting key; nil shows All Apps.
+    func presentInspectorForApp(key: String?, using openWindow: OpenWindowAction) {
+        inspectorGrouping = .app
+        inspectorSelectedGroup = key ?? ""
+        inspectorFilter = ""
+        presentInspector(using: openWindow)
     }
 
     func presentNodePicker(using openWindow: OpenWindowAction) {
