@@ -12,6 +12,18 @@ This repository is the **community Mac app** (`app.prizmx.macos`). It is not the
 - Inspector: live / recent flows (not HTTP MITM)
 - Day / month traffic, ranking, path latency (internet / DNS / proxy)
 
+Outbound protocols (imported from Clash YAML / sing-box). VLESS is the proxy framing; TLS / REALITY are transports; Vision is a VLESS flow plugin:
+
+| Protocol | Transports | Plugins / extras | TCP | UDP |
+| --- | --- | --- | --- | --- |
+| Direct | — | — | yes | yes |
+| Shadowsocks | native TCP / UDP | AEAD: `aes-128-gcm`, `aes-256-gcm` | yes | yes |
+| VLESS | TCP, TLS, REALITY | `flow`: none or `xtls-rprx-vision` (TCP); REALITY `public-key` / `short-id` / SNI | yes | UDP-over-stream. No `xudp`, no Vision UDP |
+| Trojan | TLS | SNI | yes | no |
+| AnyTLS | TLS 1.3 | SNI, `skip-cert-verify`, session pool | yes | no |
+
+Not imported: VMess, Hysteria, TUIC, WireGuard, SS2022, WebSocket / gRPC, `client-fingerprint`, Mux. Details live in [PrizmX-Foundation](https://github.com/PrizmX/PrizmX-Foundation#outbound-protocols).
+
 HTTP capture, decrypt, and rewrite are **out of scope** for open-core. Those belong in PrizmX-Premium / PrizmX-Pro.
 
 ## Layout
