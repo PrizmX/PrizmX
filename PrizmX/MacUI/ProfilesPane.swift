@@ -198,6 +198,8 @@ struct ProfilesPane: View {
     private func apply(_ id: UUID) {
         do {
             try store.selectActiveProfile(id: id)
+            appModel.didChangeActiveProfile()
+            errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -242,9 +244,13 @@ struct ProfilesPane: View {
 
     private func deleteSelected() {
         guard let selectedID = actionProfileID else { return }
+        let previousActive = store.activeProfileID
         do {
             try store.remove(id: selectedID)
             self.selectedID = store.activeProfileID
+            if store.activeProfileID != previousActive {
+                appModel.didChangeActiveProfile()
+            }
         } catch {
             errorMessage = error.localizedDescription
         }

@@ -546,10 +546,24 @@ final class AppModel {
             dashboard.profiles.recordError(error)
             return
         }
-        Task { await reloadTunnelForOverlay() }
+        Task { await reloadLiveEgress() }
     }
 
-    private func reloadTunnelForOverlay() async {
+    /// UI catalog already rebuilt; restart Packet Tunnel / mixed-port so the
+    /// live engine matches the newly selected profile. Coalesced like other
+    /// takeover flips so rapid switching cannot race stop/start.
+    func didChangeActiveProfile() {
+        persistOutboundMode()
+        TunnelLog.write(.info, "active profile changed, reloading live egress")
+        takeoverTask?.cancel()
+        takeoverTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            await reloadLiveEgress()
+        }
+    }
+
+    private func reloadLiveEgress() async {
         guard tunModeEnabled || systemProxyEnabled || allowLANEnabled else { return }
         mixedPortRuntime.invalidate()
         if isVPNOn {
