@@ -391,7 +391,6 @@ struct HomePane: View {
             emptyText: scope.emptyDescription,
             iconImage: { row in
                 AppIcon.image(bundleID: row.bundleID, executablePath: nil)
-                    ?? AppIcon.image(bundleID: "com.apple.Terminal", executablePath: nil)
             }
         ) {
             WidgetCapsulePicker(

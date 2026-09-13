@@ -1,7 +1,125 @@
 import SwiftUI
 import PrizmXServices
 
-/// Request inspector: group list + table + system inspector for the selected row.
+struct InspectorRequest: Identifiable, Hashable, Sendable {
+    var id: UUID
+    var serial: UInt64?
+    var timestamp: Date
+    var appName: String
+    var appBundleID: String?
+    var appExecutablePath: String?
+    var closed: Bool
+    var policy: String
+    var rule: String
+    var uploadBytes: UInt64
+    var downloadBytes: UInt64
+    var url: String
+    var milliseconds: Int
+    var clientEnd: String
+    var remoteEnd: String
+    var port: UInt16
+
+    init(flow: FlowRecord) {
+        id = flow.id
+        serial = flow.serial
+        timestamp = flow.startedAt
+        appName = flow.attribution?.processName ?? "—"
+        appBundleID = flow.attribution?.bundleID
+        appExecutablePath = flow.attribution?.executablePath
+        closed = flow.closed
+        policy = flow.via
+        rule = flow.rule
+        uploadBytes = flow.uplinkBytes
+        downloadBytes = flow.downlinkBytes
+        url = flow.endpoint.description
+        milliseconds = flow.milliseconds
+        clientEnd = flow.clientEnd
+        remoteEnd = flow.remoteEnd
+        port = flow.endpoint.port
+    }
+
+    var idLabel: String {
+        serial.map { "\($0)" } ?? "—"
+    }
+
+    /// Host without port, for Host grouping.
+    var hostLabel: String {
+        if url.hasPrefix("["), let end = url.firstIndex(of: "]") {
+            return String(url[url.startIndex...end])
+        }
+        if let colon = url.lastIndex(of: ":"), colon > url.startIndex {
+            return String(url[..<colon])
+        }
+        return url
+    }
+
+    var timeLabel: String {
+        timestamp.formatted(date: .numeric, time: .standard)
+    }
+
+    /// Close reason mapped for the table. Raw `eof` is Completed.
+    var statusLabel: String {
+        if !closed { return "Active" }
+        if clientEnd == "write-error" || remoteEnd == "error" { return "Failed" }
+        return "Completed"
+    }
+
+    var policyLabel: String {
+        let match = Self.ruleMatchLabel(rule)
+        if match.isEmpty { return policy }
+        return "\(policy) (\(match))"
+    }
+
+    /// `TYPE,payload,policy` from `inspectorLabel` — drop the trailing policy,
+    /// which already appears outside the parentheses.
+    private static func ruleMatchLabel(_ rule: String) -> String {
+        let trimmed = rule.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        guard let comma = trimmed.lastIndex(of: ",") else { return trimmed }
+        return String(trimmed[..<comma])
+    }
+
+    var sortSerial: UInt64 { serial ?? 0 }
+
+    var sortDuration: Int { durationMilliseconds }
+
+    var durationLabel: String {
+        let ms = durationMilliseconds
+        if ms < 1 { return "—" }
+        if ms < 1_000 { return "\(ms) ms" }
+        if ms < 60_000 {
+            return ms.isMultiple(of: 1_000) ? "\(ms / 1_000) s" : String(format: "%.1f s", Double(ms) / 1_000)
+        }
+        let seconds = ms / 1_000
+        return "\(seconds / 60)m \(seconds % 60)s"
+    }
+
+    var protocolLabel: String {
+        switch port {
+        case 443, 8443: "HTTPS"
+        case 80, 8080: "HTTP"
+        default: "TCP"
+        }
+    }
+
+    private var durationMilliseconds: Int {
+        if milliseconds > 0 { return milliseconds }
+        if !closed {
+            return max(0, Int(Date().timeIntervalSince(timestamp) * 1_000))
+        }
+        return milliseconds
+    }
+}
+
+struct InspectorGroupRow: Identifiable, Hashable {
+    var id: String
+    var title: String
+    var count: Int
+    var bundleID: String?
+    var executablePath: String?
+}
+
+/// Request inspector: group list + request table.
 struct InspectorPane: View {
     @Environment(AppModel.self) private var appModel
     @State private var sortOrder: [KeyPathComparator<InspectorRequest>] = [
@@ -20,16 +138,18 @@ struct InspectorPane: View {
                 .navigationTitle("Inspector")
                 .toolbarRole(.editor)
                 .toolbar {
-                    ToolbarItem(placement: .principal) {
-                        ToolbarIconPicker(
-                            selection: $appModel.inspectorScope,
-                            items: InspectorScope.allCases.map {
-                                .init(value: $0, title: $0.title, systemImage: $0.systemImage)
+                    ToolbarItem(placement: .primaryAction) {
+                        IconControlGroup {
+                            ForEach(InspectorScope.allCases) { scope in
+                                Button(scope.title, systemImage: scope.systemImage) {
+                                    appModel.inspectorScope = scope
+                                }
+                                .help(scope.title)
                             }
-                        )
+                        }
                     }
                     ToolbarItem(placement: .primaryAction) {
-                        Button("Clear", systemImage: "trash") {
+                        Button("Clear", systemImage: "xmark.circle") {
                             appModel.clearInspector()
                         }
                         .labelStyle(.iconOnly)
@@ -42,9 +162,6 @@ struct InspectorPane: View {
                 }
         }
         .searchable(text: $appModel.inspectorFilter, prompt: "Filter")
-        .inspector(isPresented: detailPresented) {
-            requestInspector
-        }
         .onChange(of: appModel.inspectorGrouping) { _, _ in
             selectedGroup = ""
         }
@@ -61,7 +178,7 @@ struct InspectorPane: View {
             Label(allGroupTitle, systemImage: "tray.2")
                 .badge(appModel.inspectorRequests.count)
                 .tag("")
-            ForEach(namedGroups) { row in
+            ForEach(appModel.inspectorGroupRows) { row in
                 Label {
                     Text(row.title)
                         .lineLimit(1)
@@ -82,7 +199,8 @@ struct InspectorPane: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 10)
             .padding(.vertical, 8)
         }
     }
@@ -110,13 +228,11 @@ struct InspectorPane: View {
             .width(150)
             TableColumn("App", value: \.appName) { item in
                 HStack(spacing: 6) {
-                    if item.appName != "—" {
-                        AppIconView(
-                            bundleID: item.appBundleID,
-                            executablePath: item.appExecutablePath,
-                            size: 16
-                        )
-                    }
+                    AppIconView(
+                        bundleID: item.appBundleID,
+                        executablePath: item.appExecutablePath,
+                        size: 16
+                    )
                     Text(item.appName)
                         .lineLimit(1)
                 }
@@ -168,60 +284,17 @@ struct InspectorPane: View {
         }
     }
 
-    @ViewBuilder
-    private var requestInspector: some View {
-        if let request = appModel.selectedInspectorRequest {
-            Form {
-                Section {
-                    LabeledContent("App", value: request.appName)
-                    LabeledContent("URL", value: request.url)
-                    LabeledContent("Status", value: request.statusLabel)
-                    LabeledContent("Policy", value: request.policyLabel)
-                    LabeledContent("Protocol", value: request.protocolLabel)
-                    LabeledContent("Duration", value: request.durationLabel)
-                    LabeledContent("Client", value: request.clientEnd)
-                    LabeledContent("Remote", value: request.remoteEnd)
-                }
-            }
-            .formStyle(.grouped)
-        } else {
-            ContentUnavailableView {
-                Label("Request", systemImage: "doc.plaintext")
-            } description: {
-                Text("Select a request to inspect policy and timing.")
-            }
-        }
-    }
-
     private var displayedRequests: [InspectorRequest] {
         let rows = appModel.inspectorRequests
         guard !selectedGroup.isEmpty else { return rows }
-        return rows.filter { $0.groupKey(appModel.inspectorGrouping) == selectedGroup }
-    }
-
-    private var namedGroups: [InspectorGroupRow] {
-        var counts: [String: Int] = [:]
-        var icons: [String: (bundleID: String?, path: String?)] = [:]
-        for request in appModel.inspectorRequests {
-            let key = request.groupKey(appModel.inspectorGrouping)
-            counts[key, default: 0] += 1
-            if icons[key] == nil {
-                icons[key] = (request.appBundleID, request.appExecutablePath)
-            }
-        }
-        return counts.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }.map { key in
-            InspectorGroupRow(
-                id: key,
-                title: key,
-                count: counts[key] ?? 0,
-                bundleID: icons[key]?.bundleID,
-                executablePath: icons[key]?.path
-            )
+        return rows.filter {
+            let key = appModel.inspectorGrouping == .app ? $0.appName : $0.hostLabel
+            return key == selectedGroup
         }
     }
 
     private var groupKeys: Set<String> {
-        Set(namedGroups.map(\.id))
+        Set(appModel.inspectorGroupRows.map(\.id))
     }
 
     private var allGroupTitle: String {
@@ -245,34 +318,6 @@ struct InspectorPane: View {
             Image(systemName: appModel.inspectorGrouping == .app ? "app" : "globe")
                 .foregroundStyle(.secondary)
                 .frame(width: 16, height: 16)
-        }
-    }
-
-    private var detailPresented: Binding<Bool> {
-        Binding(
-            get: { appModel.selectedInspectorRequestID != nil },
-            set: { presented in
-                if !presented {
-                    appModel.selectedInspectorRequestID = nil
-                }
-            }
-        )
-    }
-}
-
-private struct InspectorGroupRow: Identifiable, Hashable {
-    var id: String
-    var title: String
-    var count: Int
-    var bundleID: String?
-    var executablePath: String?
-}
-
-private extension InspectorRequest {
-    func groupKey(_ grouping: InspectorGrouping) -> String {
-        switch grouping {
-        case .app: appName
-        case .host: hostLabel
         }
     }
 }

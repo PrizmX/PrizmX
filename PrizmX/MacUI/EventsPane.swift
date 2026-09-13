@@ -58,7 +58,7 @@ struct EventsPane: View {
                         }
                     }
                     .help("Show in Finder")
-                    Button("Clear", systemImage: "trash") {
+                    Button("Clear", systemImage: "xmark.circle") {
                         TunnelLog.clear()
                         Task { await refresh() }
                     }

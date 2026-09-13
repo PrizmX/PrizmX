@@ -29,18 +29,36 @@ enum AppIcon {
         return small
     }
 
+    static let fallbackBundleID = "com.apple.Terminal"
+
     static func image(bundleID: String?, executablePath: String?) -> Image? {
-        nsImage(bundleID: bundleID, executablePath: executablePath).map { Image(nsImage: $0) }
+        if let resolved = nsImage(bundleID: bundleID, executablePath: executablePath) {
+            return Image(nsImage: resolved)
+        }
+        if bundleID != fallbackBundleID,
+           let fallback = nsImage(bundleID: fallbackBundleID, executablePath: nil) {
+            return Image(nsImage: fallback)
+        }
+        return nil
     }
 
     private static func loadRaw(bundleID: String?, executablePath: String?) -> NSImage? {
-        if let path = executablePath, !path.isEmpty {
-            return NSWorkspace.shared.icon(forFile: path)
-        }
         if let bundleID, let url = applicationURL(for: bundleID) {
             return NSWorkspace.shared.icon(forFile: url.path)
         }
+        if let appPath = applicationPath(fromExecutable: executablePath) {
+            return NSWorkspace.shared.icon(forFile: appPath)
+        }
         return nil
+    }
+
+    /// `/Applications/Safari.app/Contents/MacOS/Safari` → `Safari.app`.
+    /// Bare unix binaries are skipped so callers can fall back to Terminal.
+    private static func applicationPath(fromExecutable path: String?) -> String? {
+        guard let path, !path.isEmpty else { return nil }
+        if path.hasSuffix(".app") { return path }
+        guard let range = path.range(of: ".app/") else { return nil }
+        return String(path[..<range.lowerBound]) + ".app"
     }
 
     private static func applicationURL(for bundleID: String) -> URL? {
