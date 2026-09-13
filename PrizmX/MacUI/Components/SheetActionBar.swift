@@ -33,3 +33,34 @@ extension SheetActionBar where Leading == EmptyView {
         }
     }
 }
+
+/// Fitted confirmation / message sheet matching ProfileNameSheet.
+struct ConfirmSheet: View {
+    var title: String
+    var message: String
+    var doneTitle: String = "OK"
+    var showsCancel: Bool = true
+    var onCancel: () -> Void = {}
+    var onDone: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title).font(.headline)
+                Text(message)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            SheetActionBar(doneTitle: doneTitle, onDone: onDone) {
+                if showsCancel {
+                    Button("Cancel", action: onCancel)
+                        .keyboardShortcut(.cancelAction)
+                }
+            }
+        }
+        .frame(width: 360)
+        .presentationSizing(.fitted)
+    }
+}

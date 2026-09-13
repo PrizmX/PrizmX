@@ -96,19 +96,28 @@ struct ProfilesPane: View {
                 onDone: createProfile
             )
         }
-        .alert("Delete Profile", isPresented: $isDeletePresented) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) { deleteSelected() }
-        } message: {
-            Text("This removes the profile from PrizmX. The action cannot be undone.")
+        .sheet(isPresented: $isDeletePresented) {
+            ConfirmSheet(
+                title: "Delete Profile",
+                message: "This removes the profile from PrizmX. The action cannot be undone.",
+                doneTitle: "Delete",
+                onCancel: { isDeletePresented = false },
+                onDone: {
+                    isDeletePresented = false
+                    deleteSelected()
+                }
+            )
         }
-        .alert("Error", isPresented: Binding(
+        .sheet(isPresented: Binding(
             get: { errorMessage != nil },
             set: { if !$0 { errorMessage = nil } }
         )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(errorMessage ?? "")
+            ConfirmSheet(
+                title: "Error",
+                message: errorMessage ?? "",
+                showsCancel: false,
+                onDone: { errorMessage = nil }
+            )
         }
         .sheet(isPresented: $isURLPresented, onDismiss: { urlImportError = nil }) {
             InstallFromURLSheet(

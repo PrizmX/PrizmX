@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 import PrizmXConfig
 import PrizmXNodes
@@ -7,6 +6,8 @@ import PrizmXUIEngine
 
 /// Policy groups from the active profile, with member nodes on the right.
 struct PoliciesPane: View {
+    private static let groupColumnRatio: CGFloat = 0.4
+
     @Environment(AppModel.self) private var appModel
     @State private var selectedGroupID: String?
     @State private var selectedNodeID: String?
@@ -28,10 +29,14 @@ struct PoliciesPane: View {
                         ?? "Import a profile, then set it active in Profiles."
                 )
             } else {
-                HSplitView {
-                    groupList(groups)
-                        .frame(minWidth: 200, idealWidth: 260, maxWidth: 360)
-                    memberTable(groups)
+                GeometryReader { geo in
+                    HStack(spacing: 0) {
+                        groupList(groups)
+                            .frame(width: geo.size.width * Self.groupColumnRatio)
+                        Divider()
+                        memberTable(groups)
+                    }
+                    .frame(width: geo.size.width, height: geo.size.height)
                 }
             }
         }
@@ -133,7 +138,55 @@ struct PoliciesPane: View {
 
     private func memberTable(_ groups: [PolicyGroupSection]) -> some View {
         let members = filteredMembers(groups.first { $0.id == selectedGroupID }?.members ?? [])
-        return Group {
+        return Table(members, selection: $selectedNodeID) {
+            TableColumn("Member") { (member: PolicyMember) in
+                HStack {
+                    if member.id == selectedID(in: selectedGroupID) {
+                        Image(systemName: "checkmark")
+                            .foregroundStyle(.tint)
+                            .frame(width: 14)
+                    } else {
+                        Color.clear.frame(width: 14)
+                    }
+                    Text(member.name)
+                }
+            }
+            TableColumn("Type") { member in
+                Text(member.kindLabel)
+                    .foregroundStyle(member.isUnsupported ? Color.orange : Color.primary)
+            }
+            .width(110)
+            TableColumn("Latency") { member in
+                if let node = member.node, appModel.nodeList.hasPingResult(for: node) {
+                    let ms = appModel.nodeList.latency(for: node)
+                    Text(LatencyFormat.label(ms))
+                        .foregroundStyle(LatencyFormat.color(ms))
+                        .monospacedDigit()
+                } else if member.node != nil, appModel.nodeList.isPinging {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Text("—").foregroundStyle(.tertiary)
+                }
+            }
+            .width(90)
+        }
+        .tableStyle(.inset)
+        .contextMenu(forSelectionType: String.self) { ids in
+            if let id = ids.first, let member = members.first(where: { $0.id == id }) {
+                Button("Select") { selectMember(member) }
+                    .disabled(member.isUnsupported)
+                if let node = member.node {
+                    Button("Ping") { Task { await appModel.nodeList.ping(node) } }
+                }
+            }
+        } primaryAction: { ids in
+            if let id = ids.first,
+               let member = members.first(where: { $0.id == id }),
+               !member.isUnsupported {
+                selectMember(member)
+            }
+        }
+        .overlay {
             if members.isEmpty {
                 ContentUnavailableView {
                     Label("No Members", systemImage: "point.3.connected.trianglepath.dotted")
@@ -143,55 +196,6 @@ struct PoliciesPane: View {
                             ? "Select a policy group."
                             : "No members match this filter."
                     )
-                }
-            } else {
-                Table(members, selection: $selectedNodeID) {
-                    TableColumn("Member") { (member: PolicyMember) in
-                        HStack {
-                            if member.id == selectedID(in: selectedGroupID) {
-                                Image(systemName: "checkmark")
-                                    .foregroundStyle(.tint)
-                                    .frame(width: 14)
-                            } else {
-                                Color.clear.frame(width: 14)
-                            }
-                            Text(member.name)
-                        }
-                    }
-                    TableColumn("Type") { member in
-                        Text(member.kindLabel)
-                            .foregroundStyle(member.isUnsupported ? Color.orange : Color.primary)
-                    }
-                    .width(110)
-                    TableColumn("Latency") { member in
-                        if let node = member.node, appModel.nodeList.hasPingResult(for: node) {
-                            let ms = appModel.nodeList.latency(for: node)
-                            Text(LatencyFormat.label(ms))
-                                .foregroundStyle(LatencyFormat.color(ms))
-                                .monospacedDigit()
-                        } else if member.node != nil, appModel.nodeList.isPinging {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Text("—").foregroundStyle(.tertiary)
-                        }
-                    }
-                    .width(90)
-                }
-                .tableStyle(.inset)
-                .contextMenu(forSelectionType: String.self) { ids in
-                    if let id = ids.first, let member = members.first(where: { $0.id == id }) {
-                        Button("Select") { selectMember(member) }
-                            .disabled(member.isUnsupported)
-                        if let node = member.node {
-                            Button("Ping") { Task { await appModel.nodeList.ping(node) } }
-                        }
-                    }
-                } primaryAction: { ids in
-                    if let id = ids.first,
-                       let member = members.first(where: { $0.id == id }),
-                       !member.isUnsupported {
-                        selectMember(member)
-                    }
                 }
             }
         }
