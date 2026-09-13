@@ -128,12 +128,11 @@ struct RulesPane: View {
                     .help("Delete")
                 }
             }
-            ToolbarSpacer(.fixed, placement: .primaryAction)
             ToolbarItem(placement: .primaryAction) {
                 ToolbarSearchField(text: $search, prompt: "Search rules")
             }
-            ConsoleInspectorToolbar()
         }
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .sheet(item: $editor) { rule in
             OverlayRuleEditor(
                 title: overlay.rules.contains(where: { $0.id == rule.id }) ? "Edit Rule" : "Add Rule",

@@ -66,8 +66,8 @@ struct EventsPane: View {
                     .disabled(lines.isEmpty)
                 }
             }
-            ConsoleInspectorToolbar()
         }
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .task {
             await refresh()
             while !Task.isCancelled {

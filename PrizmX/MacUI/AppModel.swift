@@ -155,14 +155,6 @@ enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
         }
     }
 
-    /// These panes append Error + Inspector after their own actions.
-    var ownsTrailingInspector: Bool {
-        switch self {
-        case .profiles, .policies, .rules, .events: true
-        default: false
-        }
-    }
-
     var placeholderSummary: String? {
         switch self {
         case .module: "Overlay snippets on the active profile."
@@ -210,6 +202,10 @@ final class AppModel {
     var selectedInspectorRequestID: InspectorRequest.ID?
     var inspectorActiveFlows: [FlowRecord] = []
     var inspectorRecentFlows: [FlowRecord] = []
+    @ObservationIgnored
+    private var inspectorSerials: [UUID: UInt64] = [:]
+    @ObservationIgnored
+    private var inspectorNextSerial: UInt64 = 0
     var egressIP = "—"
     var egressInfo: EgressIPInfo?
     var egressLookupError: String?
@@ -304,7 +300,9 @@ final class AppModel {
                     downlinkBytes: 180_000,
                     milliseconds: 1_840,
                     clientEnd: "eof",
-                    remoteEnd: "eof"
+                    remoteEnd: "eof",
+                    rule: "DOMAIN-SUFFIX,github.com",
+                    serial: 1
                 )
             ]
         } else {
@@ -398,6 +396,7 @@ final class AppModel {
                 guard let self, !Task.isCancelled else { return }
                 let metrics = self.dashboard.vpn.lastMetrics
                 self.trafficLedger.ingest(metrics)
+                self.rememberInspectorSerials(metrics.activeFlows + metrics.recentFlows)
                 self.inspectorActiveFlows = metrics.activeFlows
                 self.inspectorRecentFlows = metrics.recentFlows
             }
@@ -437,20 +436,23 @@ final class AppModel {
 
     var inspectorRequests: [InspectorRequest] {
         let flows = inspectorScope == .active ? inspectorActiveFlows : inspectorRecentFlows
-        var rows = flows.map(InspectorRequest.init(flow:))
+        var rows = flows.map { flow -> InspectorRequest in
+            var request = InspectorRequest(flow: flow)
+            if request.serial == nil {
+                request.serial = inspectorSerials[flow.id]
+            }
+            return request
+        }
         let query = inspectorFilter.trimmingCharacters(in: .whitespacesAndNewlines)
         if !query.isEmpty {
             rows = rows.filter {
                 $0.url.localizedCaseInsensitiveContains(query)
-                    || $0.policy.localizedCaseInsensitiveContains(query)
-                    || $0.status.localizedCaseInsensitiveContains(query)
+                    || $0.appName.localizedCaseInsensitiveContains(query)
+                    || $0.policyLabel.localizedCaseInsensitiveContains(query)
+                    || $0.statusLabel.localizedCaseInsensitiveContains(query)
+                    || $0.protocolLabel.localizedCaseInsensitiveContains(query)
+                    || $0.idLabel.localizedCaseInsensitiveContains(query)
             }
-        }
-        switch inspectorGrouping {
-        case .host:
-            rows.sort { $0.url < $1.url }
-        case .app:
-            rows.sort { $0.timestamp > $1.timestamp }
         }
         return rows
     }
@@ -465,6 +467,20 @@ final class AppModel {
         selectedInspectorRequestID = nil
         mixedPortRuntime.clearFlows()
         Task { await dashboard.vpn.clearFlows() }
+    }
+
+    /// Tunnel snapshots may omit `serial` (old sysex). Number flows stably by UUID.
+    private func rememberInspectorSerials(_ flows: [FlowRecord]) {
+        for flow in flows {
+            if inspectorSerials[flow.id] != nil { continue }
+            if let serial = flow.serial, serial > 0 {
+                inspectorSerials[flow.id] = serial
+                inspectorNextSerial = max(inspectorNextSerial, serial)
+            } else {
+                inspectorNextSerial += 1
+                inspectorSerials[flow.id] = inspectorNextSerial
+            }
+        }
     }
 
     /// Persists the active profile overlay, rebuilds the in-app catalog, and
@@ -643,11 +659,12 @@ extension AppModel {
 
 struct InspectorRequest: Identifiable, Hashable, Sendable {
     var id: UUID
+    var serial: UInt64?
     var timestamp: Date
     var appName: String
     var appBundleID: String?
     var appExecutablePath: String?
-    var status: String
+    var closed: Bool
     var policy: String
     var rule: String
     var uploadBytes: UInt64
@@ -656,22 +673,97 @@ struct InspectorRequest: Identifiable, Hashable, Sendable {
     var milliseconds: Int
     var clientEnd: String
     var remoteEnd: String
+    var port: UInt16
 
     init(flow: FlowRecord) {
         id = flow.id
+        serial = flow.serial
         timestamp = flow.startedAt
         appName = flow.attribution?.processName ?? "—"
         appBundleID = flow.attribution?.bundleID
         appExecutablePath = flow.attribution?.executablePath
-        status = flow.closed ? (flow.clientEnd.isEmpty ? "closed" : flow.clientEnd) : "active"
+        closed = flow.closed
         policy = flow.via
-        rule = flow.rule.isEmpty ? "—" : flow.rule
+        rule = flow.rule
         uploadBytes = flow.uplinkBytes
         downloadBytes = flow.downlinkBytes
         url = flow.endpoint.description
         milliseconds = flow.milliseconds
         clientEnd = flow.clientEnd
         remoteEnd = flow.remoteEnd
+        port = flow.endpoint.port
+    }
+
+    var idLabel: String {
+        serial.map { "\($0)" } ?? "—"
+    }
+
+    /// Host without port, for By Host grouping.
+    var hostLabel: String {
+        if url.hasPrefix("["), let end = url.firstIndex(of: "]") {
+            return String(url[url.startIndex...end])
+        }
+        if let colon = url.lastIndex(of: ":"), colon > url.startIndex {
+            return String(url[..<colon])
+        }
+        return url
+    }
+
+    var timeLabel: String {
+        timestamp.formatted(date: .numeric, time: .standard)
+    }
+
+    /// Close reason mapped for the table. Raw `eof` is Completed.
+    var statusLabel: String {
+        if !closed { return "Active" }
+        if clientEnd == "write-error" || remoteEnd == "error" { return "Failed" }
+        return "Completed"
+    }
+
+    var policyLabel: String {
+        let match = Self.ruleMatchLabel(rule)
+        if match.isEmpty { return policy }
+        return "\(policy) (\(match))"
+    }
+
+    /// `TYPE,payload,policy` from `inspectorLabel` — drop the trailing policy,
+    /// which already appears outside the parentheses.
+    private static func ruleMatchLabel(_ rule: String) -> String {
+        let trimmed = rule.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        guard let comma = trimmed.lastIndex(of: ",") else { return trimmed }
+        return String(trimmed[..<comma])
+    }
+
+    var sortSerial: UInt64 { serial ?? 0 }
+
+    var sortDuration: Int { durationMilliseconds }
+
+    var durationLabel: String {
+        let ms = durationMilliseconds
+        if ms < 1 { return "—" }
+        if ms < 1_000 { return "\(ms) ms" }
+        if ms < 60_000 {
+            return ms.isMultiple(of: 1_000) ? "\(ms / 1_000) s" : String(format: "%.1f s", Double(ms) / 1_000)
+        }
+        let seconds = ms / 1_000
+        return "\(seconds / 60)m \(seconds % 60)s"
+    }
+
+    var protocolLabel: String {
+        switch port {
+        case 443, 8443: "HTTPS"
+        case 80, 8080: "HTTP"
+        default: "TCP"
+        }
+    }
+
+    private var durationMilliseconds: Int {
+        if milliseconds > 0 { return milliseconds }
+        if !closed {
+            return max(0, Int(Date().timeIntervalSince(timestamp) * 1_000))
+        }
+        return milliseconds
     }
 }
 

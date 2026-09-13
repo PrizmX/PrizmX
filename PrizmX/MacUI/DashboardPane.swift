@@ -85,17 +85,24 @@ struct HomePane: View {
         let nextBoard = WidgetGrid.boardWidth(unit: nextUnit)
         if abs(nextUnit - unit) < 0.5 { return }
         if widthSettleTask == nil, unit == WidgetGrid.minUnit {
-            unit = nextUnit
-            boardWidth = nextBoard
+            applyBoard(unit: nextUnit, width: nextBoard)
             return
         }
         widthSettleTask?.cancel()
         widthSettleTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(280))
             guard !Task.isCancelled else { return }
+            applyBoard(unit: nextUnit, width: nextBoard)
+            widthSettleTask = nil
+        }
+    }
+
+    private func applyBoard(unit nextUnit: CGFloat, width nextBoard: CGFloat) {
+        var transaction = Transaction()
+        transaction.animation = nil
+        withTransaction(transaction) {
             unit = nextUnit
             boardWidth = nextBoard
-            widthSettleTask = nil
         }
     }
 

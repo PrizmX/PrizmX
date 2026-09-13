@@ -6,32 +6,63 @@ import PrizmXUIEngine
 /// Console: Home + Sources / Routing / Advanced / System, Inspector pops out.
 struct SurgeStyleMainWindow: View {
     @Environment(AppModel.self) private var appModel
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+
+    private var isSidebarCollapsed: Bool {
+        columnVisibility == .detailOnly
+    }
 
     var body: some View {
         @Bindable var appModel = appModel
 
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebarColumn
+                .hidingSystemSidebarToggle(isSidebarCollapsed)
+                .toolbar {
+                    // Expanded: system toggle stays; Inspector sits to its left.
+                    if !isSidebarCollapsed {
+                        ToolbarItem(placement: .automatic) {
+                            InspectorToolbarButton()
+                        }
+                    }
+                }
         } detail: {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(minWidth: 900, minHeight: 520)
+        .toolbar { windowToolbar }
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
-        .toolbar {
-            if !appModel.selectedSidebarItem.ownsTrailingInspector {
-                ToolbarItemGroup(placement: .primaryAction) {
-                    ErrorToolbarButton()
-                    InspectorToolbarButton()
-                }
-            }
-        }
         .onChange(of: appModel.dashboard.status) { _, _ in
             appModel.refreshSessionClock()
         }
         .onAppear {
             appModel.refreshSessionClock()
         }
+    }
+
+    @ToolbarContentBuilder
+    private var windowToolbar: some ToolbarContent {
+        if isSidebarCollapsed {
+            ToolbarItem(placement: .navigation) {
+                IconControlGroup {
+                    InspectorToolbarButton()
+                    sidebarToggleButton
+                }
+            }
+        }
+        if appModel.dashboard.lastError != nil {
+            ToolbarItem(placement: .confirmationAction) {
+                ErrorToolbarButton()
+            }
+        }
+    }
+
+    private var sidebarToggleButton: some View {
+        Button("Toggle Sidebar", systemImage: "sidebar.left") {
+            NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
+        }
+        .labelStyle(.iconOnly)
+        .help("Toggle Sidebar")
     }
 
     // MARK: - Sidebar
@@ -72,8 +103,7 @@ struct SurgeStyleMainWindow: View {
                 sidebarRow(.events)
             }
         }
-        .listStyle(.sidebar)
-        .navigationSplitViewColumnWidth(min: 180, ideal: 208, max: 260)
+        .consoleSidebarColumn()
     }
 
     /// Debug bisection (`PRIZMX_BARE_SIDEBAR=1`): no selection.
@@ -82,8 +112,7 @@ struct SurgeStyleMainWindow: View {
             Text("Home")
             Text("Policies")
         }
-        .listStyle(.sidebar)
-        .navigationSplitViewColumnWidth(min: 180, ideal: 208, max: 260)
+        .consoleSidebarColumn()
     }
 
     private func sidebarRow(_ item: SidebarItem) -> some View {
@@ -130,6 +159,23 @@ struct SurgeStyleMainWindow: View {
         case .module, .scripts:
             ComingSoonPane(item: appModel.selectedSidebarItem)
         }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func hidingSystemSidebarToggle(_ hidden: Bool) -> some View {
+        if hidden {
+            toolbar(removing: .sidebarToggle)
+        } else {
+            self
+        }
+    }
+
+    /// Wide enough for window controls + Inspector + the system sidebar toggle.
+    func consoleSidebarColumn() -> some View {
+        listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 360)
     }
 }
 

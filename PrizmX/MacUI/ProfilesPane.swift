@@ -67,8 +67,8 @@ struct ProfilesPane: View {
                 .labelStyle(.iconOnly)
                 .help("Show in Finder")
             }
-            ConsoleInspectorToolbar()
         }
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .onAppear {
             selectedID = appModel.dashboard.profiles.activeProfileID
             lastSelectedID = selectedID
