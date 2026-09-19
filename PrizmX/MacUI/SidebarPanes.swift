@@ -207,7 +207,7 @@ struct SettingsPane: View {
                         Text(style.title).tag(style)
                     }
                 }
-                .help("Idle stays gray. This only changes the connected proxy icon.")
+                .help("Idle stays gray. System Proxy uses the template prism. This only changes the TUN icon.")
             }
 
             Section("Events") {

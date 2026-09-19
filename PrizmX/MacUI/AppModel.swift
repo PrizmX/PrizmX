@@ -30,6 +30,23 @@ enum MenuBarConnectedStyle: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
+/// Menu-bar glyph. Capture is reserved so the label can grow without another AppKit probe.
+enum MenuBarSessionState: String, Hashable {
+    case idle
+    case systemProxy
+    case tun
+    case capture
+
+    var title: String {
+        switch self {
+        case .idle: "Not Proxied"
+        case .systemProxy: "System Proxy"
+        case .tun: "TUN"
+        case .capture: "Capturing"
+        }
+    }
+}
+
 enum OutboundMode: String, CaseIterable, Identifiable, Hashable {
     case rule
     case global
@@ -427,6 +444,13 @@ final class AppModel {
 
     var isVPNOn: Bool {
         dashboard.status.isConnectedOrTransitioningOn
+    }
+
+    /// Precedence: capture (later) > TUN > system proxy > idle.
+    var menuBarSessionState: MenuBarSessionState {
+        if isVPNOn { return .tun }
+        if systemProxyEnabled { return .systemProxy }
+        return .idle
     }
 
     var selectedNodeLatency: Double? {
