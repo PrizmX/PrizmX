@@ -197,6 +197,7 @@ final class AppModel {
     let dashboard: DashboardViewModel
     let nodeList: NodeListViewModel
     let trafficLedger: TrafficLedger
+    let scripts: ScriptStore
     let networkLink = NetworkLinkMonitor()
     /// Direct internet RTT (not the selected node). `nil` before the first probe.
     var internetLatency: Double?
@@ -328,6 +329,7 @@ final class AppModel {
             eventsLogLevel = .info
             sessionStartedAt = Date().addingTimeInterval(-3_723)
             trafficLedger = .preview
+            scripts = .preview
             internetLatency = 9
             dnsLatency = 6
             let mock = MockTrafficGenerator.metrics()
@@ -362,6 +364,7 @@ final class AppModel {
                 sessionStartedAt = Date()
             }
             trafficLedger = TrafficLedger()
+            scripts = ScriptStore()
         }
         if !preview {
             installKeyMonitor()
