@@ -76,7 +76,6 @@ struct PoliciesPane: View {
                 ToolbarSearchField(text: $nodeList.searchText, prompt: "Filter nodes")
             }
         }
-        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .sheet(item: $editor) { group in
             OverlayGroupEditor(
                 title: editorTitle(for: group),

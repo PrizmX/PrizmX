@@ -99,7 +99,6 @@ struct EventsPane: View {
                 }
             }
         }
-        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .task {
             await refresh()
             while !Task.isCancelled {

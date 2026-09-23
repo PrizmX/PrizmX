@@ -79,7 +79,6 @@ struct RulesPane: View {
                 ToolbarSearchField(text: $search, prompt: "Search rules")
             }
         }
-        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .sheet(item: $editor) { rule in
             OverlayRuleEditor(
                 title: overlay.rules.contains(where: { $0.id == rule.id }) ? "Edit Rule" : "Add Rule",

@@ -70,7 +70,6 @@ struct ProfilesPane: View {
                 .help("Show in Finder")
             }
         }
-        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .onAppear {
             selectedID = appModel.dashboard.profiles.activeProfileID
             lastSelectedID = selectedID

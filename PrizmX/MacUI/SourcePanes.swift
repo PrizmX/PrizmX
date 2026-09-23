@@ -86,7 +86,6 @@ struct AppsPane: View {
                 ToolbarSearchField(text: $search, prompt: "Search apps")
             }
         }
-        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     }
 
     private var displayRows: [AppModel.AppRosterRow] {
@@ -186,7 +185,6 @@ struct LANPane: View {
             }
         }
         .navigationTitle("LAN")
-        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     }
 
     private var header: some View {
