@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import PrizmXServices
 
@@ -155,25 +156,40 @@ struct InspectorPane: View {
     @State private var sortOrder: [KeyPathComparator<InspectorRequest>] = [
         KeyPathComparator(\InspectorRequest.timestamp, order: .reverse)
     ]
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+
+    private var isSidebarCollapsed: Bool {
+        columnVisibility == .detailOnly
+    }
+
     var body: some View {
         @Bindable var appModel = appModel
 
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             groupSidebar
+                .hidingSystemSidebarToggle(isSidebarCollapsed)
         } detail: {
             requestTable
                 .navigationTitle("Inspector")
                 .toolbarRole(.editor)
                 .toolbar {
+                    if isSidebarCollapsed {
+                        // Collapsed: the system toggle is removed, so provide a
+                        // stable custom one that is never re-created mid-slide.
+                        ToolbarItem(placement: .navigation) {
+                            sidebarToggleButton
+                        }
+                    }
                     ToolbarItem(placement: .primaryAction) {
-                        IconControlGroup {
+                        Picker("Scope", selection: $appModel.inspectorScope) {
                             ForEach(InspectorScope.allCases) { scope in
-                                Button(scope.title, systemImage: scope.systemImage) {
-                                    appModel.inspectorScope = scope
-                                }
-                                .help(scope.title)
+                                Label(scope.title, systemImage: scope.systemImage)
+                                    .tag(scope)
+                                    .help(scope.title)
                             }
                         }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
                     }
                     ToolbarItem(placement: .primaryAction) {
                         Button("Clear", systemImage: "xmark.circle") {
@@ -196,35 +212,32 @@ struct InspectorPane: View {
 
     private var groupSidebar: some View {
         @Bindable var appModel = appModel
-        return List(selection: $appModel.inspectorSelectedGroup) {
-            Label(allGroupTitle, systemImage: "tray.2")
-                .badge(appModel.inspectorRequests.count)
-                .tag("")
-            ForEach(appModel.inspectorGroupRows) { row in
-                Label {
-                    Text(row.title)
-                        .lineLimit(1)
-                } icon: {
-                    groupIcon(row)
-                }
-                .badge(row.count)
-                .tag(row.id)
-            }
-        }
-        .listStyle(.sidebar)
+        return InspectorSidebarList(
+            selection: $appModel.inspectorSelectedGroup,
+            allTitle: allGroupTitle,
+            allCount: appModel.inspectorRequests.count,
+            rows: appModel.inspectorGroupRows,
+            grouping: appModel.inspectorGrouping
+        )
         .navigationSplitViewColumnWidth(min: 180, ideal: 208, max: 260)
         .safeAreaBar(edge: .top) {
-            Picker("Group", selection: $appModel.inspectorGrouping) {
-                ForEach(InspectorGrouping.allCases) { grouping in
-                    Text(grouping.title).tag(grouping)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            CapsuleSegmentedControl(
+                options: InspectorGrouping.allCases,
+                selection: $appModel.inspectorGrouping,
+                title: \.title
+            )
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
         }
+    }
+
+    private var sidebarToggleButton: some View {
+        Button("Toggle Sidebar", systemImage: "sidebar.left") {
+            NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
+        }
+        .labelStyle(.iconOnly)
+        .help("Toggle Sidebar")
     }
 
     private var requestTable: some View {
@@ -335,20 +348,6 @@ struct InspectorPane: View {
             : "Recent requests will appear here once the tunnel reports connections."
     }
 
-    @ViewBuilder
-    private func groupIcon(_ row: InspectorGroupRow) -> some View {
-        if let placeholder = row.placeholderSystemImage {
-            Image(systemName: placeholder)
-                .foregroundStyle(.secondary)
-                .frame(width: 16, height: 16)
-        } else if appModel.inspectorGrouping == .app, row.title != "—" {
-            AppIconView(bundleID: row.bundleID, executablePath: row.executablePath, size: 16)
-        } else {
-            Image(systemName: appModel.inspectorGrouping == .app ? "app" : "globe")
-                .foregroundStyle(.secondary)
-                .frame(width: 16, height: 16)
-        }
-    }
 }
 
 #Preview("Inspector") {

@@ -2,6 +2,20 @@ import AppKit
 import SwiftUI
 import PrizmXUIEngine
 
+extension View {
+    /// When a managed sidebar is collapsed, drop the auto system toggle so it
+    /// is not torn down and re-created mid-animation (visible flicker); the
+    /// caller supplies a stable custom toggle in the detail toolbar instead.
+    @ViewBuilder
+    func hidingSystemSidebarToggle(_ hidden: Bool) -> some View {
+        if hidden {
+            toolbar(removing: .sidebarToggle)
+        } else {
+            self
+        }
+    }
+}
+
 /// Plus/minus (and similar) capsule on Profiles / Policies / Rules / Events.
 struct IconControlGroup<Content: View>: View {
     @ViewBuilder var content: () -> Content
@@ -116,13 +130,19 @@ struct ErrorToolbarButton: View {
                     Label("Error", systemImage: "exclamationmark.triangle.fill")
                         .font(.headline)
                         .foregroundStyle(.orange)
-                    Text(error)
-                        .font(.body)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: 360, alignment: .leading)
+                    ScrollView {
+                        Text(error)
+                            .font(.body)
+                            .textSelection(.enabled)
+                            // Wrap at the popover width instead of truncating
+                            // to one line; ScrollView caps long errors.
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 320)
                 }
                 .padding(16)
-                .frame(minWidth: 240)
+                .frame(width: 360)
             }
         }
     }

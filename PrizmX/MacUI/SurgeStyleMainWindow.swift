@@ -13,13 +13,12 @@ struct SurgeStyleMainWindow: View {
     }
 
     var body: some View {
-        @Bindable var appModel = appModel
-
         NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebarColumn
                 .hidingSystemSidebarToggle(isSidebarCollapsed)
+                // Expanded: system toggle in the sidebar header, Inspector
+                // to its left. Custom toggle is only used when collapsed.
                 .toolbar {
-                    // Expanded: system toggle stays; Inspector sits to its left.
                     if !isSidebarCollapsed {
                         ToolbarItem(placement: .automatic) {
                             InspectorToolbarButton()
@@ -30,30 +29,27 @@ struct SurgeStyleMainWindow: View {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .toolbar { windowToolbar }
+        .toolbar {
+            if isSidebarCollapsed {
+                ToolbarItem(placement: .navigation) {
+                    IconControlGroup {
+                        InspectorToolbarButton()
+                        sidebarToggleButton
+                    }
+                }
+            }
+            if appModel.dashboard.lastError != nil {
+                ToolbarItem(placement: .confirmationAction) {
+                    ErrorToolbarButton()
+                }
+            }
+        }
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .onChange(of: appModel.dashboard.status) { _, _ in
             appModel.refreshSessionClock()
         }
         .onAppear {
             appModel.refreshSessionClock()
-        }
-    }
-
-    @ToolbarContentBuilder
-    private var windowToolbar: some ToolbarContent {
-        if isSidebarCollapsed {
-            ToolbarItem(placement: .navigation) {
-                IconControlGroup {
-                    InspectorToolbarButton()
-                    sidebarToggleButton
-                }
-            }
-        }
-        if appModel.dashboard.lastError != nil {
-            ToolbarItem(placement: .confirmationAction) {
-                ErrorToolbarButton()
-            }
         }
     }
 
@@ -82,28 +78,8 @@ struct SurgeStyleMainWindow: View {
 
     private var fullSidebar: some View {
         @Bindable var appModel = appModel
-        return List(selection: $appModel.selectedSidebarItem) {
-            sidebarRow(.home)
-
-            Section("SOURCES") {
-                sidebarRow(.apps)
-                sidebarRow(.lan)
-            }
-            Section("ROUTING") {
-                sidebarRow(.profiles)
-                sidebarRow(.policies)
-                sidebarRow(.rules)
-            }
-            Section("ADVANCED") {
-                sidebarRow(.module)
-                sidebarRow(.scripts)
-            }
-            Section("SYSTEM") {
-                sidebarRow(.settings)
-                sidebarRow(.events)
-            }
-        }
-        .consoleSidebarColumn()
+        return NativeSidebarList(selection: $appModel.selectedSidebarItem)
+            .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 360)
     }
 
     /// Debug bisection (`PRIZMX_BARE_SIDEBAR=1`): no selection.
@@ -113,13 +89,6 @@ struct SurgeStyleMainWindow: View {
             Text("Policies")
         }
         .consoleSidebarColumn()
-    }
-
-    private func sidebarRow(_ item: SidebarItem) -> some View {
-        Label(item.title, systemImage: item.systemImage)
-            .tag(item)
-            .disabled(!item.isEnabled)
-            .foregroundStyle(item.isEnabled ? Color.primary : Color.secondary)
     }
 
     // MARK: - Detail
@@ -163,15 +132,6 @@ struct SurgeStyleMainWindow: View {
 }
 
 private extension View {
-    @ViewBuilder
-    func hidingSystemSidebarToggle(_ hidden: Bool) -> some View {
-        if hidden {
-            toolbar(removing: .sidebarToggle)
-        } else {
-            self
-        }
-    }
-
     /// Wide enough for window controls + Inspector + the system sidebar toggle.
     func consoleSidebarColumn() -> some View {
         listStyle(.sidebar)

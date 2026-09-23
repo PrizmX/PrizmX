@@ -31,15 +31,23 @@ enum AppIcon {
 
     static let fallbackBundleID = "com.apple.Terminal"
 
-    static func image(bundleID: String?, executablePath: String?) -> Image? {
+    /// NSImage with the CLI fallback (Terminal) baked in. Use from AppKit rows
+    /// (sidebar) that render NSImage directly instead of `AppIconView`.
+    static func resolvedNSImage(bundleID: String?, executablePath: String?) -> NSImage? {
         if let resolved = nsImage(bundleID: bundleID, executablePath: executablePath) {
-            return Image(nsImage: resolved)
+            return resolved
         }
-        if bundleID != fallbackBundleID,
-           let fallback = nsImage(bundleID: fallbackBundleID, executablePath: nil) {
-            return Image(nsImage: fallback)
+        if bundleID != fallbackBundleID {
+            return nsImage(bundleID: fallbackBundleID, executablePath: nil)
         }
         return nil
+    }
+
+    static func image(bundleID: String?, executablePath: String?) -> Image? {
+        guard let resolved = resolvedNSImage(bundleID: bundleID, executablePath: executablePath) else {
+            return nil
+        }
+        return Image(nsImage: resolved)
     }
 
     private static func loadRaw(bundleID: String?, executablePath: String?) -> NSImage? {
