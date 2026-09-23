@@ -75,8 +75,16 @@ struct MenuBarPanel: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        Text(sessionUptime(from: appModel.sessionStartedAt, now: context.date))
+                    if appModel.menuPanelPresented {
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            Text(sessionUptime(from: appModel.sessionStartedAt, now: context.date))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        // Popover closed: render a frozen value so no 1s
+                        // scheduler runs in the always-mounted panel graph.
+                        Text(sessionUptime(from: appModel.sessionStartedAt, now: .now))
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }

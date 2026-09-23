@@ -230,7 +230,9 @@ struct HomePane: View {
         case .takeover:
             TakeoverCard(
                 headline: takeoverHeadline,
-                startedAt: appModel.isVPNOn ? appModel.sessionStartedAt : nil,
+                // The session clock's TimelineView only ticks while a window
+                // can actually show it.
+                startedAt: appModel.isVPNOn && appModel.anyWindowVisible ? appModel.sessionStartedAt : nil,
                 proxyIsOn: $model.systemProxyEnabled,
                 tunIsOn: $model.tunModeEnabled
             )

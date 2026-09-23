@@ -286,6 +286,17 @@ final class AppModel {
         }
     }
 
+    /// Menu-bar popover open state, derived from window visibility tracking.
+    var menuPanelPresented = false {
+        didSet { updateUIVisibility() }
+    }
+    /// True while any titled app window is on screen and not occluded.
+    /// Gates live-chart publishing and wall-clock TimelineViews.
+    private(set) var anyWindowVisible = false
+
+    @ObservationIgnored
+    nonisolated(unsafe) private var uiVisibilityObservers: [NSObjectProtocol] = []
+
     @ObservationIgnored
     nonisolated(unsafe) private var keyMonitor: Any?
     @ObservationIgnored
@@ -354,6 +365,7 @@ final class AppModel {
         }
         if !preview {
             installKeyMonitor()
+            installUIVisibilityTracking()
             startTrafficIngest()
             networkLink.onChange = { [weak self] in
                 self?.scheduleEgressRefresh()
@@ -408,6 +420,9 @@ final class AppModel {
         }
         if let terminateObserver {
             NotificationCenter.default.removeObserver(terminateObserver)
+        }
+        for observer in uiVisibilityObservers {
+            NotificationCenter.default.removeObserver(observer)
         }
     }
 
@@ -723,6 +738,55 @@ extension AppModel {
     func quit() {
         mixedPortRuntime.shutdown()
         NSApplication.shared.terminate(nil)
+    }
+
+    /// Live charts and clocks only earn their keep while some surface is
+    /// visible. Window close / miniaturize / occlusion all land here; the
+    /// menu-bar popover reports through `menuPanelPresented`.
+    private func installUIVisibilityTracking() {
+        // The macOS 27 SDK dropped the Visible notifications; occlusion
+        // state flips whenever a window is ordered in or out.
+        let names: [Notification.Name] = [
+            NSWindow.didChangeOcclusionStateNotification,
+            NSWindow.willCloseNotification,
+            NSWindow.didMiniaturizeNotification,
+            NSWindow.didDeminiaturizeNotification,
+            NSApplication.didHideNotification,
+            NSApplication.didUnhideNotification
+        ]
+        for name in names {
+            let observer = NotificationCenter.default.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                // Window state flips after the notification posts.
+                DispatchQueue.main.async { self?.updateUIVisibility() }
+            }
+            uiVisibilityObservers.append(observer)
+        }
+        updateUIVisibility()
+    }
+
+    private func updateUIVisibility() {
+        var windowVisible = false
+        var panelVisible = false
+        for window in NSApp.windows where window.isVisible && window.occlusionState.contains(.visible) {
+            if window.styleMask.contains(.titled) {
+                windowVisible = true
+            } else if window.frame.height >= 50 {
+                // The menu-bar popover panel; status-item label windows are
+                // menu-bar height and never reach this branch.
+                panelVisible = true
+            }
+        }
+        if windowVisible != anyWindowVisible {
+            anyWindowVisible = windowVisible
+        }
+        if panelVisible != menuPanelPresented {
+            menuPanelPresented = panelVisible
+        }
+        dashboard.setSpeedHistoryPublishing(windowVisible || panelVisible)
     }
 
     private func installKeyMonitor() {
