@@ -126,7 +126,6 @@
 				5B604097303FEE1300F6C632 /* Frameworks */,
 				5B604098303FEE1300F6C632 /* Resources */,
 				5B6040B9303FEE1400F6C70A /* Embed System Extensions */,
-				5B7D0101305E0001000A01 /* Install Debug to /Applications */,
 			);
 			buildRules = (
 			);
@@ -153,6 +152,7 @@
 				5B6040B3303FEE1400F6C704 /* Sources */,
 				5B6040B2303FEE1400F6C703 /* Frameworks */,
 				5B6040B4303FEE1400F6C705 /* Resources */,
+				5B7D0202305E0001000A0201 /* Stamp Extension Build Version */,
 			);
 			buildRules = (
 			);
@@ -232,7 +232,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		5B7D0101305E0001000A01 /* Install Debug to /Applications */ = {
+		5B7D0202305E0001000A0201 /* Stamp Extension Build Version */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -242,14 +242,14 @@
 			);
 			inputPaths = (
 			);
-			name = "Install Debug to /Applications";
+			name = "Stamp Extension Build Version";
 			outputFileListPaths = (
 			);
 			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"${CONFIGURATION}\" != \"Debug\" ]; then exit 0; fi\nAPP=\"${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}\"\nif [ -d \"$APP\" ]; then\n  rm -rf /Applications/PrizmX.app\n  ditto \"$APP\" /Applications/PrizmX.app\n  echo \"Installed $APP -> /Applications/PrizmX.app\"\nfi\n";
+			shellScript = "# sysextd only replaces an activated extension when its bundle\n# version changes. A fixed 1.0/1 means dev builds never reach the\n# running tunnel; stamp a timestamp build version before signing.\nPLIST=\"${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}/Contents/Info.plist\"\nif [ -f \"$PLIST\" ]; then\n  STAMP=$(date +%Y%m%d%H%M)\n  /usr/libexec/PlistBuddy -c \"Set :CFBundleVersion $STAMP\" \"$PLIST\" || exit 1\n  echo \"Stamped CFBundleVersion=$STAMP -> $PLIST\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -485,6 +485,7 @@
 				DEVELOPMENT_TEAM = N49M3Z72D3;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = NO;
 				EXECUTABLE_NAME = PacketTunnel;
@@ -521,6 +522,7 @@
 				DEVELOPMENT_TEAM = N49M3Z72D3;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = NO;
 				EXECUTABLE_NAME = PacketTunnel;

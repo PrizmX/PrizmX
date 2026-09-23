@@ -22,6 +22,7 @@ enum TunnelSystemExtension {
 enum TunnelSystemExtensionError: Error, LocalizedError {
     case notInApplications(String)
     case needsUserApproval
+    case invalidSignature
 
     var errorDescription: String? {
         switch self {
@@ -35,6 +36,10 @@ enum TunnelSystemExtensionError: Error, LocalizedError {
                 + "System extensions cannot load from a DMG, Downloads, or Xcode's build folder."
         case .needsUserApproval:
             return "Enable PrizmX Tunnel in System Settings → General → Login Items & Extensions → Network Extensions, then turn TUN on again."
+        case .invalidSignature:
+            return "macOS rejected the installed PrizmX.app: its code signature is broken "
+                + "(an unsigned or modified copy in /Applications). Rebuild the PrizmX scheme "
+                + "to reinstall a signed copy, then turn TUN on again."
         }
     }
 }
@@ -98,7 +103,19 @@ private final class Activator: NSObject, OSSystemExtensionRequestDelegate {
 
     func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
         TunnelLog.write(.error, "system extension failed: \(error.localizedDescription)")
-        finish(throwing: error)
+        finish(throwing: Self.friendlyError(error))
+    }
+
+    /// sysextd validates the on-disk host bundle when realizing the extension
+    /// reference. If an unsigned / modified binary was copied into the
+    /// installed PrizmX.app, the request fails with a cryptic
+    /// `sysextd.ExtensionReference.referenceErrors` — translate that.
+    private static func friendlyError(_ error: Error) -> Error {
+        let nsError = error as NSError
+        if nsError.domain.contains("sysextd"), nsError.domain.contains("reference") {
+            return TunnelSystemExtensionError.invalidSignature
+        }
+        return error
     }
 
     private func finish(throwing error: Error? = nil) {
