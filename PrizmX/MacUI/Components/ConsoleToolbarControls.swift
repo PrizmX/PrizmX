@@ -7,15 +7,14 @@ extension View {
     /// is not torn down and re-created mid-animation (visible flicker); the
     /// caller supplies a stable custom toggle in the detail toolbar instead.
     ///
+    /// Keep this unbranched: an if/else wrapper swaps view identity, so every
+    /// toggle destroys and recreates the sidebar list, and the auto-selected
+    /// first row is written back as the new selection.
+    ///
     /// The swap reconciles the window toolbar, so persistent icons must live
     /// on the detail pane (Rules, InspectorDetail), not on the split view.
-    @ViewBuilder
     func hidingSystemSidebarToggle(_ hidden: Bool) -> some View {
-        if hidden {
-            toolbar(removing: .sidebarToggle)
-        } else {
-            self
-        }
+        toolbar(removing: hidden ? .sidebarToggle : nil)
     }
 }
 

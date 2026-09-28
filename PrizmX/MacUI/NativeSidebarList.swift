@@ -75,7 +75,10 @@ struct NativeSidebarList: NSViewRepresentable {
         }
 
         func applySelection(_ item: SidebarItem, force: Bool) {
-            guard isActive, let outline, outline.window != nil else { return }
+            // No window requirement: selectRowIndexes works off-window, so
+            // the initial (or a recreated) list keeps its real selection
+            // instead of falling back to the auto-selected first row.
+            guard isActive, let outline else { return }
             guard let node = findNode(item) else { return }
             let row = outline.row(forItem: node)
             guard row >= 0 else { return }

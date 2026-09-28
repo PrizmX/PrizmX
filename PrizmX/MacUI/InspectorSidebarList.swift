@@ -148,7 +148,9 @@ struct InspectorSidebarList: NSViewRepresentable {
         }
 
         func applySelection(_ id: String) {
-            guard isActive, let outline, outline.window != nil else { return }
+            // See NativeSidebarList: select off-window so recreation does not
+            // reset the selection to the auto-selected first row.
+            guard isActive, let outline else { return }
             guard let node = nodes.first(where: { $0.id == id }) else { return }
             let row = outline.row(forItem: node)
             guard row >= 0 else { return }
