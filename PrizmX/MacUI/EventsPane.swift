@@ -16,18 +16,12 @@ struct EventsPane: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 2) {
-                        if lines.isEmpty {
-                            Text("No events yet.")
-                                .foregroundStyle(.tertiary)
-                                .id("empty")
-                        } else {
-                            ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
-                                Text(line)
-                                    .font(.system(.caption, design: .monospaced))
-                                    .foregroundStyle(color(for: line))
-                                    .textSelection(.enabled)
-                                    .id(index)
-                            }
+                        ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                            Text(line)
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(color(for: line))
+                                .textSelection(.enabled)
+                                .id(index)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -78,6 +72,15 @@ struct EventsPane: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 1)
             )
+            .overlay {
+                if lines.isEmpty {
+                    ConsoleEmptyState(
+                        title: "No Events",
+                        systemImage: SidebarItem.events.systemImage,
+                        description: "Tunnel runtime events will appear here."
+                    )
+                }
+            }
         }
         .padding(20)
         .navigationTitle("Events")
@@ -109,7 +112,10 @@ struct EventsPane: View {
     }
 
     private nonisolated static func readLines() -> [String] {
-        TunnelLog.read().split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        // Log lines are always non-empty. Omitting empties keeps the list
+        // truly empty when the log is missing ("".split with false yields
+        // one empty element) and drops the trailing newline's blank row.
+        TunnelLog.read().split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
     }
 
     /// `TunnelLog.read()` blocks on file I/O; keep it off the main actor.
