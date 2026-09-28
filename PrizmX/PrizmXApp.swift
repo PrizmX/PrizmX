@@ -62,7 +62,13 @@ private struct FullScreenPrimaryWindow: NSViewRepresentable {
     }
 
     private static func apply(_ window: NSWindow?) {
-        window?.collectionBehavior.insert([.fullScreenPrimary, .fullScreenAllowsTiling])
-        window?.collectionBehavior.remove(.fullScreenAuxiliary)
+        guard let window else { return }
+        let next = window.collectionBehavior
+            .union([.fullScreenPrimary, .fullScreenAllowsTiling])
+            .subtracting(.fullScreenAuxiliary)
+        // Assigning the same value still refreshes the titlebar. Collapse
+        // updates this view, so an unconditional write flashes the toolbar.
+        guard next != window.collectionBehavior else { return }
+        window.collectionBehavior = next
     }
 }

@@ -153,9 +153,6 @@ struct InspectorGroupRow: Identifiable, Hashable {
 /// Request inspector: group list + request table.
 struct InspectorPane: View {
     @Environment(AppModel.self) private var appModel
-    @State private var sortOrder: [KeyPathComparator<InspectorRequest>] = [
-        KeyPathComparator(\InspectorRequest.timestamp, order: .reverse)
-    ]
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     private var isSidebarCollapsed: Bool {
@@ -163,51 +160,34 @@ struct InspectorPane: View {
     }
 
     var body: some View {
-        @Bindable var appModel = appModel
-
+        // Same toggle as the main window: the system button stays in the
+        // sidebar while it is open. Only the collapsed state uses a custom
+        // one, so the system button is not moved across the divider.
         NavigationSplitView(columnVisibility: $columnVisibility) {
             groupSidebar
                 .hidingSystemSidebarToggle(isSidebarCollapsed)
         } detail: {
-            requestTable
-                .navigationTitle("Inspector")
-                .toolbarRole(.editor)
-                .toolbar {
-                    if isSidebarCollapsed {
-                        // Collapsed: the system toggle is removed, so provide a
-                        // stable custom one that is never re-created mid-slide.
-                        ToolbarItem(placement: .navigation) {
-                            sidebarToggleButton
-                        }
-                    }
-                    ToolbarItem(placement: .primaryAction) {
-                        Picker("Scope", selection: $appModel.inspectorScope) {
-                            ForEach(InspectorScope.allCases) { scope in
-                                Label(scope.title, systemImage: scope.systemImage)
-                                    .tag(scope)
-                                    .help(scope.title)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                    }
-                    ToolbarItem(placement: .primaryAction) {
-                        Button("Clear", systemImage: "xmark.circle") {
-                            appModel.clearInspector()
-                        }
-                        .labelStyle(.iconOnly)
-                        .disabled(
-                            appModel.inspectorScope == .active
-                                || appModel.inspectorRecentFlows.isEmpty
-                        )
-                        .help("Clear recent flows")
-                    }
-                }
+            InspectorDetail()
         }
-        .searchable(text: $appModel.inspectorFilter, prompt: "Filter")
+        .toolbar {
+            if isSidebarCollapsed {
+                ToolbarItem(placement: .navigation) {
+                    sidebarToggleButton
+                }
+            }
+        }
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .onChange(of: appModel.inspectorGrouping) { _, _ in
             appModel.inspectorSelectedGroup = ""
         }
+    }
+
+    private var sidebarToggleButton: some View {
+        Button("Toggle Sidebar", systemImage: "sidebar.left") {
+            NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
+        }
+        .labelStyle(.iconOnly)
+        .help("Toggle Sidebar")
     }
 
     private var groupSidebar: some View {
@@ -232,12 +212,53 @@ struct InspectorPane: View {
         }
     }
 
-    private var sidebarToggleButton: some View {
-        Button("Toggle Sidebar", systemImage: "sidebar.left") {
-            NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
-        }
-        .labelStyle(.iconOnly)
-        .help("Toggle Sidebar")
+    private var allGroupTitle: String {
+        appModel.inspectorGrouping == .app ? "All Apps" : "All Hosts"
+    }
+
+}
+
+/// Detail column. Kept separate so sidebar collapse does not re-render it.
+private struct InspectorDetail: View {
+    @Environment(AppModel.self) private var appModel
+    @State private var sortOrder: [KeyPathComparator<InspectorRequest>] = [
+        KeyPathComparator(\InspectorRequest.timestamp, order: .reverse)
+    ]
+
+    var body: some View {
+        @Bindable var appModel = appModel
+        requestTable
+            .navigationTitle("Inspector")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Picker("Scope", selection: $appModel.inspectorScope) {
+                        ForEach(InspectorScope.allCases) { scope in
+                            Label(scope.title, systemImage: scope.systemImage)
+                                .tag(scope)
+                                .help(scope.title)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Clear", systemImage: "xmark.circle") {
+                        appModel.clearInspector()
+                    }
+                    .labelStyle(.iconOnly)
+                    .disabled(
+                        appModel.inspectorScope == .active
+                            || appModel.inspectorRecentFlows.isEmpty
+                    )
+                    .help("Clear recent flows")
+                }
+                // Break the pill group: without a spacer the Clear button and
+                // the search field are rendered as one capsule.
+                ToolbarSpacer(.fixed, placement: .primaryAction)
+                ToolbarItem(placement: .primaryAction) {
+                    ToolbarSearchField(text: $appModel.inspectorFilter, prompt: "Filter")
+                }
+            }
     }
 
     private var requestTable: some View {
@@ -333,10 +354,6 @@ struct InspectorPane: View {
             let key = appModel.inspectorGrouping == .app ? $0.accountingKey : $0.hostLabel
             return key == selected
         }
-    }
-
-    private var allGroupTitle: String {
-        appModel.inspectorGrouping == .app ? "All Apps" : "All Hosts"
     }
 
     private var emptyDescription: String {
