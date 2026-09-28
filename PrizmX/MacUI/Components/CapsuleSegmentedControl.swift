@@ -44,7 +44,9 @@ struct CapsuleSegmentedControl<Option: Hashable & Identifiable>: View {
         let selected = selection == option
         return Button {
             guard !selected else { return }
-            withAnimation(.spring(duration: 0.3, bounce: 0.15)) {
+            // Critically damped: a bouncing spring visibly trails/overshoots
+            // compared to the system segmented control.
+            withAnimation(.snappy(duration: 0.22)) {
                 selection = option
             }
         } label: {

@@ -25,6 +25,9 @@ struct InspectorSidebarList: NSViewRepresentable {
         outline.floatsGroupRows = false
         outline.focusRingType = .none
         outline.backgroundColor = .clear
+        // SwiftUI sets the scroll view frame directly on split-view drags;
+        // the width mask keeps the column autoresizing chain engaged.
+        outline.autoresizingMask = [.width]
         outline.delegate = context.coordinator
         outline.dataSource = context.coordinator
 
@@ -133,8 +136,15 @@ struct InspectorSidebarList: NSViewRepresentable {
             lastRowIDs = nextIDs
             lastRowTitles = nextTitles
             lastRowCounts = nextCounts
-            outline?.reloadData()
-            applySelection(selection)
+            // SwiftUI transactions (the App/Host capsule switch) leak their
+            // animation into representable updates; keep the AppKit reload
+            // instant so the list never trails the thumb animation.
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0
+                context.allowsImplicitAnimation = false
+                outline?.reloadData()
+                applySelection(selection)
+            }
         }
 
         func applySelection(_ id: String) {

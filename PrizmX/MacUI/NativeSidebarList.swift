@@ -23,6 +23,9 @@ struct NativeSidebarList: NSViewRepresentable {
         outline.floatsGroupRows = false
         outline.focusRingType = .none
         outline.backgroundColor = .clear
+        // SwiftUI sets the scroll view frame directly on split-view drags;
+        // the width mask keeps the column autoresizing chain engaged.
+        outline.autoresizingMask = [.width]
         outline.delegate = context.coordinator
         outline.dataSource = context.coordinator
 
@@ -237,6 +240,19 @@ struct NativeSidebarList: NSViewRepresentable {
 }
 
 final class SidebarOutlineView: NSOutlineView {
+    /// Keep the single filling column pinned to the clip width. SwiftUI sets
+    /// the scroll view frame directly during a split-view drag, which can
+    /// bypass the autoresizing chain that drives column autoresizing.
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        super.resizeSubviews(withOldSize: oldSize)
+        guard let clipWidth = enclosingScrollView?.contentView.bounds.width,
+              clipWidth > 0 else { return }
+        if abs(frame.width - clipWidth) > 0.5 {
+            setFrameSize(NSSize(width: clipWidth, height: frame.height))
+        }
+        sizeLastColumnToFit()
+    }
+
     func tearDown() {
         NotificationCenter.default.removeObserver(self)
     }
