@@ -20,6 +20,10 @@
 	<array>
 		<string>/Library/Application Support/PrizmX/</string>
 	</array>
+	<key>com.apple.security.temporary-exception.files.absolute-path.read-only</key>
+	<array>
+		<string>/etc/hosts</string>
+	</array>
 	<key>com.apple.security.personal-information.location</key>
 	<true/>
 	<key>com.apple.security.network.client</key>
