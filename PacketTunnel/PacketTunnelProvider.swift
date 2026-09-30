@@ -16,17 +16,61 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// encapsulation on the physical path.
     private static let tunnelMTU: NSNumber = 1400
 
-    private var stack: TUNStack?
-    private var engine: Engine?
-    private var pumpTask: Task<Void, Never>?
-    private var relayTask: Task<Void, Never>?
-    private var pathMonitor: Network.NWPathMonitor?
-    private var pathRefreshTask: Task<Void, Never>?
-    private var metricsTask: Task<Void, Never>?
-    private var lastPathFingerprint: String?
-    private var useFakeIP = true
-    private var systemDNS: [String] = []
-    private var ipv6FakeIP = false
+    /// Mutable tunnel state. NE calls (`handleAppMessage`, `stopTunnel`,
+    /// `wake`) arrive on the provider queue while the path monitor and
+    /// start/stop Tasks run elsewhere, so every access goes through `shared`.
+    private struct SharedState {
+        var stack: TUNStack?
+        var engine: Engine?
+        var pumpTask: Task<Void, Never>?
+        var relayTask: Task<Void, Never>?
+        var pathMonitor: Network.NWPathMonitor?
+        var pathRefreshTask: Task<Void, Never>?
+        var metricsTask: Task<Void, Never>?
+        var lastPathFingerprint: String?
+        var useFakeIP = true
+        var systemDNS: [String] = []
+        var ipv6FakeIP = false
+    }
+
+    private let shared = OSAllocatedUnfairLock(uncheckedState: SharedState())
+
+    private var stack: TUNStack? {
+        get { shared.withLockUnchecked { $0.stack } }
+        set { shared.withLockUnchecked { $0.stack = newValue } }
+    }
+    private var engine: Engine? {
+        get { shared.withLockUnchecked { $0.engine } }
+        set { shared.withLockUnchecked { $0.engine = newValue } }
+    }
+    private var pumpTask: Task<Void, Never>? {
+        get { shared.withLockUnchecked { $0.pumpTask } }
+        set { shared.withLockUnchecked { $0.pumpTask = newValue } }
+    }
+    private var relayTask: Task<Void, Never>? {
+        get { shared.withLockUnchecked { $0.relayTask } }
+        set { shared.withLockUnchecked { $0.relayTask = newValue } }
+    }
+    private var pathMonitor: Network.NWPathMonitor? {
+        get { shared.withLockUnchecked { $0.pathMonitor } }
+        set { shared.withLockUnchecked { $0.pathMonitor = newValue } }
+    }
+    private var metricsTask: Task<Void, Never>? {
+        get { shared.withLockUnchecked { $0.metricsTask } }
+        set { shared.withLockUnchecked { $0.metricsTask = newValue } }
+    }
+    private var useFakeIP: Bool {
+        get { shared.withLockUnchecked { $0.useFakeIP } }
+        set { shared.withLockUnchecked { $0.useFakeIP = newValue } }
+    }
+    private var systemDNS: [String] {
+        get { shared.withLockUnchecked { $0.systemDNS } }
+        set { shared.withLockUnchecked { $0.systemDNS = newValue } }
+    }
+    private var ipv6FakeIP: Bool {
+        get { shared.withLockUnchecked { $0.ipv6FakeIP } }
+        set { shared.withLockUnchecked { $0.ipv6FakeIP = newValue } }
+    }
     private let log = Logger(subsystem: "app.prizmx", category: "PacketTunnel")
     /// Last 1s snapshot for `handleAppMessage`; the host UI reads the kit file.
     private let lastMetrics = OSAllocatedUnfairLock(initialState: TrafficSnapshot.zero)
@@ -157,6 +201,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 completionHandler?(try? TunnelIPC.encode(.failure("selectNode missing nodeID/groupName")))
                 return
             }
+            let engine = self.engine
             do {
                 try engine?.nodeManager.select(nodeID: nodeID, inGroup: group)
                 PolicySelectionStore.set(nodeID, inGroup: group)
@@ -176,8 +221,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             OutboundModeStore.save(mode: mode, globalGroup: request.groupName)
             completionHandler?(try? TunnelIPC.encode(.success()))
         case .setCaptureMode:
-            let fakeIP = request.fakeIP ?? self.useFakeIP
-            self.useFakeIP = fakeIP
+            let fakeIP = shared.withLockUnchecked { state -> Bool in
+                let next = request.fakeIP ?? state.useFakeIP
+                state.useFakeIP = next
+                return next
+            }
             Task { [weak self] in
                 guard let self else {
                     completionHandler?(try? TunnelIPC.encode(.failure("deallocated")))
@@ -224,19 +272,23 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private func shutdown() async {
-        pathMonitor?.cancel()
-        pathMonitor = nil
-        pathRefreshTask?.cancel()
-        pathRefreshTask = nil
+        let taken = shared.withLockUnchecked { state -> SharedState in
+            let snapshot = state
+            state.pathMonitor = nil
+            state.pathRefreshTask = nil
+            state.pumpTask = nil
+            state.relayTask = nil
+            state.engine = nil
+            state.stack = nil
+            return snapshot
+        }
+        taken.pathMonitor?.cancel()
+        taken.pathRefreshTask?.cancel()
         stopMetricsDump()
-        pumpTask?.cancel()
-        relayTask?.cancel()
-        pumpTask = nil
-        relayTask = nil
-        engine?.stopURLTest()
-        engine = nil
-        await stack?.stop()
-        stack = nil
+        taken.pumpTask?.cancel()
+        taken.relayTask?.cancel()
+        taken.engine?.stopURLTest()
+        await taken.stack?.stop()
         TunnelLog.write(.info, "tunnel stopped")
         log.info("tunnel stopped")
     }
@@ -245,19 +297,28 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// `handleAppMessage` — that call resets the rate window.
     private func startMetricsDump() {
         publishMetrics()
-        metricsTask?.cancel()
-        metricsTask = Task { [weak self] in
+        let task = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 guard let self, !Task.isCancelled else { return }
                 self.publishMetrics()
             }
         }
+        let previous = shared.withLockUnchecked { state -> Task<Void, Never>? in
+            let old = state.metricsTask
+            state.metricsTask = task
+            return old
+        }
+        previous?.cancel()
     }
 
     private func stopMetricsDump() {
-        metricsTask?.cancel()
-        metricsTask = nil
+        let task = shared.withLockUnchecked { state -> Task<Void, Never>? in
+            let old = state.metricsTask
+            state.metricsTask = nil
+            return old
+        }
+        task?.cancel()
         lastMetrics.withLock { $0 = .zero }
         TunnelMetricsStore.clear()
     }
@@ -298,31 +359,42 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private func notePath(_ path: Network.NWPath) async {
         let fingerprint = Self.pathFingerprint(path)
-        if fingerprint == lastPathFingerprint { return }
-        let isFirst = lastPathFingerprint == nil
-        lastPathFingerprint = fingerprint
-        if isFirst { return }
-        pathRefreshTask?.cancel()
-        pathRefreshTask = Task { [weak self] in
+        let changed = shared.withLockUnchecked { state -> Bool in
+            if fingerprint == state.lastPathFingerprint { return false }
+            let isFirst = state.lastPathFingerprint == nil
+            state.lastPathFingerprint = fingerprint
+            return !isFirst
+        }
+        guard changed else { return }
+        let task = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
             await self?.refreshAfterPathChange(reason: "path \(fingerprint)")
         }
+        let previous = shared.withLockUnchecked { state -> Task<Void, Never>? in
+            let old = state.pathRefreshTask
+            state.pathRefreshTask = task
+            return old
+        }
+        previous?.cancel()
     }
 
     private func refreshAfterPathChange(reason: String) async {
-        guard engine != nil else { return }
+        guard let engine else { return }
         let captured = PhysicalDNSSnapshot.capture()
-        engine?.dns.applyPhysicalDNS(captured)
-        if !captured.isEmpty {
-            systemDNS = captured
+        engine.dns.applyPhysicalDNS(captured)
+        let (fakeIP, dnsServers, ipv6) = shared.withLockUnchecked { state in
+            if !captured.isEmpty {
+                state.systemDNS = captured
+            }
+            return (state.useFakeIP, state.systemDNS, state.ipv6FakeIP)
         }
         TunnelLog.write(.info, "path refresh (\(reason)) dns=\(captured)")
         log.info("path refresh (\(reason, privacy: .public)) dns=\(captured, privacy: .public)")
         let settings = Self.makeNetworkSettings(
-            useFakeIP: useFakeIP,
-            dnsServers: systemDNS,
-            ipv6: ipv6FakeIP
+            useFakeIP: fakeIP,
+            dnsServers: dnsServers,
+            ipv6: ipv6
         )
         do {
             try await setTunnelNetworkSettings(settings)
