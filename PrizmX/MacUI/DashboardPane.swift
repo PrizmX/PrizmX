@@ -277,7 +277,7 @@ struct HomePane: View {
     }
 
     private var takeoverHeadline: String {
-        switch (appModel.systemProxyEnabled, appModel.tunModeEnabled) {
+        switch (appModel.systemProxyActive, appModel.tunModeEnabled) {
         case (true, true): "Proxy + TUN"
         case (true, false): "System Proxy"
         case (false, true): "TUN"
@@ -300,7 +300,7 @@ struct HomePane: View {
         ) {
             if let profile, profile.isSubscription {
                 WidgetIconButton(systemImage: "arrow.clockwise", help: "Update subscription") {
-                    Task { try? await appModel.dashboard.profiles.refreshSubscription(id: profile.id) }
+                    Task { await appModel.refreshSubscription(id: profile.id) }
                 }
             }
         }

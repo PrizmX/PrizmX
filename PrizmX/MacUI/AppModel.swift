@@ -233,6 +233,9 @@ final class AppModel {
     var egressInfo: EgressIPInfo?
     var egressLookupError: String?
     var mixedPortListenError: String?
+    /// System proxy actually applied (listener up). `systemProxyEnabled` is
+    /// the user's intent; this drops to false when the apply fails.
+    private(set) var systemProxyActive = false
     /// Parsed once per profile apply. Home/LAN must not YAML-parse every tick.
     var inboundListen = InboundListenConfig.appDefault
     var lanDeviceByAddress: [String: LANDevice] = [:]
@@ -322,6 +325,7 @@ final class AppModel {
             nodeList = list
             menuBarOnly = false
             systemProxyEnabled = true
+            systemProxyActive = true
             tunModeEnabled = true
             allowLANEnabled = false
             menuBarConnectedStyle = .monochrome
@@ -411,6 +415,7 @@ final class AppModel {
         DockPolicy.apply(menuBarOnly: menuBarOnly)
         if !systemProxyEnabled && !allowLANEnabled {
             mixedPortRuntime.shutdown()
+            syncMixedPortState()
         }
     }
 
@@ -429,24 +434,44 @@ final class AppModel {
         }
     }
 
+    /// Ingests at 1 Hz only while `VPNManager` polls (tunnel or mixed-port
+    /// up); otherwise there is nothing new to read.
     private func startTrafficIngest() {
+        let polling = withObservationTracking {
+            dashboard.vpn.isPollingMetrics
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.startTrafficIngest() }
+        }
+        guard polling else {
+            guard trafficIngestTask != nil else { return }
+            trafficIngestTask?.cancel()
+            trafficIngestTask = nil
+            // Final pass with the zeroed snapshot clears live flows.
+            ingestTrafficTick()
+            return
+        }
+        guard trafficIngestTask == nil else { return }
         trafficIngestTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 guard let self, !Task.isCancelled else { return }
-                let metrics = self.dashboard.vpn.lastMetrics
-                self.trafficLedger.ingest(metrics)
-                self.ingestAppByteRates(metrics)
-                self.rememberInspectorSerials(metrics.activeFlows + metrics.recentFlows)
-                if self.inspectorActiveFlows != metrics.activeFlows {
-                    self.inspectorActiveFlows = metrics.activeFlows
-                }
-                if self.inspectorRecentFlows != metrics.recentFlows {
-                    self.inspectorRecentFlows = metrics.recentFlows
-                }
-                self.noteLANDevices(in: metrics.activeFlows + metrics.recentFlows)
+                self.ingestTrafficTick()
             }
         }
+    }
+
+    private func ingestTrafficTick() {
+        let metrics = dashboard.vpn.lastMetrics
+        trafficLedger.ingest(metrics)
+        ingestAppByteRates(metrics)
+        rememberInspectorSerials(metrics.activeFlows + metrics.recentFlows)
+        if inspectorActiveFlows != metrics.activeFlows {
+            inspectorActiveFlows = metrics.activeFlows
+        }
+        if inspectorRecentFlows != metrics.recentFlows {
+            inspectorRecentFlows = metrics.recentFlows
+        }
+        noteLANDevices(in: metrics.activeFlows + metrics.recentFlows)
     }
 
     func refreshInboundListen() {
@@ -467,7 +492,7 @@ final class AppModel {
     /// Precedence: capture (later) > TUN > system proxy > idle.
     var menuBarSessionState: MenuBarSessionState {
         if isVPNOn { return .tun }
-        if systemProxyEnabled { return .systemProxy }
+        if systemProxyActive { return .systemProxy }
         return .idle
     }
 
@@ -547,6 +572,12 @@ final class AppModel {
                 inspectorSerials[flow.id] = inspectorNextSerial
             }
         }
+        // Rows are built only from the current flows; forget the rest once
+        // the map outgrows them so a long session does not grow it forever.
+        if inspectorSerials.count > flows.count * 2 + 256 {
+            let live = Set(flows.map(\.id))
+            inspectorSerials = inspectorSerials.filter { live.contains($0.key) }
+        }
     }
 
     /// Sidebar group counts for App / Host mode.
@@ -605,6 +636,20 @@ final class AppModel {
         }
     }
 
+    /// Downloads a subscription (errors surface via `profiles.lastError`)
+    /// and reloads the live engine when it is the active profile.
+    func refreshSubscription(id: UUID) async {
+        do {
+            try await dashboard.profiles.refreshSubscription(id: id)
+        } catch {
+            TunnelLog.write(.error, "subscription refresh failed: \(error.localizedDescription)")
+            return
+        }
+        guard dashboard.profiles.activeProfileID == id else { return }
+        refreshInboundListen()
+        didChangeActiveProfile()
+    }
+
     private func reloadLiveEgress() async {
         guard tunModeEnabled || systemProxyEnabled || allowLANEnabled else { return }
         mixedPortRuntime.invalidate()
@@ -612,6 +657,8 @@ final class AppModel {
             dashboard.vpn.stopVPN()
             try? await Task.sleep(for: .milliseconds(400))
         }
+        // Superseded by a newer takeover, which applies the latest state.
+        guard !Task.isCancelled else { return }
         await applyTakeover()
     }
 
@@ -660,8 +707,12 @@ final class AppModel {
         } else {
             dashboard.vpn.stopVPN()
         }
+        // A newer takeover was scheduled; it owns the mixed-port state.
+        guard !Task.isCancelled else { return }
         if systemProxyEnabled || allowLANEnabled {
             do {
+                // The runtime drops superseded requests and restores the
+                // system proxy itself when an apply fails.
                 try await mixedPortRuntime.apply(
                     configText: config,
                     overlay: overlay,
@@ -671,13 +722,25 @@ final class AppModel {
                 mixedPortListenError = nil
             } catch {
                 mixedPortListenError = error.localizedDescription
+                dashboard.vpn.reportHostError(error)
                 TunnelLog.write(.error, "mixed-port failed: \(error.localizedDescription)")
             }
         } else {
             mixedPortRuntime.shutdown()
             mixedPortListenError = nil
         }
+        syncMixedPortState()
         scheduleEgressRefresh()
+    }
+
+    /// Mirrors the runtime's real state into the UI and the metrics poller.
+    private func syncMixedPortState() {
+        let running = mixedPortRuntime.isRunning
+        dashboard.vpn.localEgressActive = running
+        let active = running && systemProxyEnabled
+        if systemProxyActive != active {
+            systemProxyActive = active
+        }
     }
 
     func refreshSessionClock() {
