@@ -151,7 +151,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         TunnelLog.write(.info, attributionProbe.summary)
 
         // 2. SwiftTCP stack wired to the engine; packet emitter + relays.
-        try await startStackAndRelays(engine: engine, attributor: attributor)
+        try await startStackAndRelays(engine: engine)
 
         // Mixed-port lives in the main app (SystemProxyRuntime). Hosting it
         // inside the Packet Tunnel requires a dummy VPN that steals the
@@ -429,10 +429,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     /// Starts SwiftTCP on the virtual NIC and splices streams through Engine.
-    private func startStackAndRelays(
-        engine: Engine,
-        attributor: ProcessFlowAttributor
-    ) async throws {
+    private func startStackAndRelays(engine: Engine) async throws {
         // `NEPacketTunnelFlow.writePackets` is thread-safe; the wrapper is
         // `@unchecked Sendable` because the system type is not Sendable.
         let flow = packetFlow
@@ -442,7 +439,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             dns: engine.dns,
             dnsPolicy: { host in await engine.dnsPolicy(host: host) },
             ipv6: engine.dns.settings.ipv6,
-            flowAttributor: attributor,
             onOutput: { packets in
                 guard !packets.isEmpty else { return }
                 let protocols = packets.map { packet -> NSNumber in
