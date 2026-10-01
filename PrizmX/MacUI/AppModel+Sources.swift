@@ -47,14 +47,11 @@ extension AppModel {
             flowDown[key, default: 0] &+= flow.downlinkBytes
         }
 
-        for flow in inspectorActiveFlows {
+        for flow in inspectorFlows {
             accumulate(flow)
             if !flow.closed, let key = flow.attribution?.accountingKey {
                 sessions[key, default: 0] += 1
             }
-        }
-        for flow in inspectorRecentFlows {
-            accumulate(flow)
         }
 
         var keys = Set(metrics.appBytes.keys)
@@ -83,18 +80,15 @@ extension AppModel {
         var up: [String: UInt64] = [:]
         var down: [String: UInt64] = [:]
 
-        func accumulate(_ flow: FlowRecord, active: Bool) {
-            guard flow.attribution == nil else { return }
-            guard let host = Self.lanClientAddress(flow.sourceHost) else { return }
+        for flow in inspectorFlows {
+            guard flow.attribution == nil else { continue }
+            guard let host = Self.lanClientAddress(flow.sourceHost) else { continue }
             up[host, default: 0] &+= flow.uplinkBytes
             down[host, default: 0] &+= flow.downlinkBytes
-            if active, !flow.closed {
+            if !flow.closed {
                 sessions[host, default: 0] += 1
             }
         }
-
-        for flow in inspectorActiveFlows { accumulate(flow, active: true) }
-        for flow in inspectorRecentFlows { accumulate(flow, active: false) }
 
         return Set(up.keys).union(down.keys).union(sessions.keys)
             .map { host in

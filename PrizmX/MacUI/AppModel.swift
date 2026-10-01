@@ -214,14 +214,43 @@ final class AppModel {
     }
     var selectedSidebarItem: SidebarItem = .home
     var sessionStartedAt: Date?
-    var inspectorScope: InspectorScope = .recent
-    var inspectorGrouping: InspectorGrouping = .app
-    var inspectorFilter = ""
+    var inspectorScope: InspectorScope = .recent {
+        didSet { refreshInspectorRows() }
+    }
+    var inspectorGrouping: InspectorGrouping = .app {
+        didSet {
+            // Keys differ per grouping (bundle ID vs host). Reset in the same
+            // update so the old key is never listed under the new grouping.
+            if inspectorGrouping != oldValue {
+                inspectorSelectedGroup = ""
+            }
+        }
+    }
+    var inspectorFilter = "" {
+        didSet { refreshInspectorRows() }
+    }
     /// Empty string is All Apps / All Hosts. App grouping uses `accountingKey`.
-    var inspectorSelectedGroup = ""
+    var inspectorSelectedGroup = "" {
+        didSet { refreshInspectorRows() }
+    }
+    var inspectorSortOrder = [KeyPathComparator(\InspectorRequest.timestamp, order: .reverse)] {
+        didSet { refreshInspectorRows() }
+    }
     var selectedInspectorRequestID: InspectorRequest.ID?
-    var inspectorActiveFlows: [FlowRecord] = []
-    var inspectorRecentFlows: [FlowRecord] = []
+    /// Inspector history, newest first: open and finished requests in one
+    /// list (Recent); Active is the open ones. Mirrors `inspectorHistory`.
+    var inspectorFlows: [FlowRecord] = [] {
+        didSet { refreshInspectorRows() }
+    }
+    @ObservationIgnored
+    private var inspectorHistory = FlowHistory()
+    /// Inspector table and sidebar, rebuilt by `refreshInspectorRows()` when
+    /// an input changes (views only read them).
+    private(set) var inspectorRows: [InspectorRequest] = []
+    private(set) var inspectorGroupRows: [InspectorGroupRow] = []
+    private(set) var inspectorAllCount = 0
+    @ObservationIgnored
+    private var inspectorRowBuilder = InspectorRowBuilder()
     var appByteRates: [String: Double] = [:]
     @ObservationIgnored
     private var inspectorSerials: [UUID: UInt64] = [:]
@@ -238,7 +267,9 @@ final class AppModel {
     private(set) var systemProxyActive = false
     /// Parsed once per profile apply. Home/LAN must not YAML-parse every tick.
     var inboundListen = InboundListenConfig.appDefault
-    var lanDeviceByAddress: [String: LANDevice] = [:]
+    var lanDeviceByAddress: [String: LANDevice] = [:] {
+        didSet { refreshInspectorRows() }
+    }
     @ObservationIgnored
     var lanResolveAttempted = Set<String>()
 
@@ -336,9 +367,10 @@ final class AppModel {
             scripts = .preview
             internetLatency = 9
             dnsLatency = 6
-            let mock = MockTrafficGenerator.metrics()
-            inspectorActiveFlows = mock.activeFlows
-            inspectorRecentFlows = mock.recentFlows
+            var history = FlowHistory()
+            history.ingest(MockTrafficGenerator.metrics())
+            inspectorHistory = history
+            inspectorFlows = history.flows
             appByteRates = [
                 "com.apple.Safari": 86_000,
                 "com.apple.Music": 2_400
@@ -370,6 +402,8 @@ final class AppModel {
             trafficLedger = TrafficLedger()
             scripts = ScriptStore()
         }
+        // Assignments in init skip didSet.
+        refreshInspectorRows()
         if !preview {
             installKeyMonitor()
             installUIVisibilityTracking()
@@ -446,7 +480,7 @@ final class AppModel {
             guard trafficIngestTask != nil else { return }
             trafficIngestTask?.cancel()
             trafficIngestTask = nil
-            // Final pass with the zeroed snapshot clears live flows.
+            // Final pass with the zeroed snapshot closes live flows.
             ingestTrafficTick()
             return
         }
@@ -464,12 +498,10 @@ final class AppModel {
         let metrics = dashboard.vpn.lastMetrics
         trafficLedger.ingest(metrics)
         ingestAppByteRates(metrics)
-        rememberInspectorSerials(metrics.activeFlows + metrics.recentFlows)
-        if inspectorActiveFlows != metrics.activeFlows {
-            inspectorActiveFlows = metrics.activeFlows
-        }
-        if inspectorRecentFlows != metrics.recentFlows {
-            inspectorRecentFlows = metrics.recentFlows
+        inspectorHistory.ingest(metrics)
+        rememberInspectorSerials(inspectorHistory.flows)
+        if inspectorFlows != inspectorHistory.flows {
+            inspectorFlows = inspectorHistory.flows
         }
         noteLANDevices(in: metrics.activeFlows + metrics.recentFlows)
     }
@@ -521,41 +553,46 @@ final class AppModel {
         dnsLatency = await dns
     }
 
-    var inspectorRequests: [InspectorRequest] {
-        let flows = inspectorScope == .active ? inspectorActiveFlows : inspectorRecentFlows
-        var rows = flows.map { flow -> InspectorRequest in
-            let host = AppModel.lanClientAddress(flow.sourceHost)
-            var request = InspectorRequest(
-                flow: flow,
-                lanDevice: host.flatMap { lanDeviceByAddress[$0] }
+    /// Rebuilds the Inspector table and sidebar from the history, scope,
+    /// filter, group and sort. Unchanged outputs are not re-published, so an
+    /// idle history does not redraw the table.
+    private func refreshInspectorRows() {
+        let output = inspectorRowBuilder.build(
+            InspectorRowBuilder.Input(
+                flows: inspectorFlows,
+                scope: inspectorScope,
+                filter: inspectorFilter,
+                grouping: inspectorGrouping,
+                selectedGroup: inspectorSelectedGroup,
+                sortOrder: inspectorSortOrder,
+                lanDevices: lanDeviceByAddress,
+                serials: inspectorSerials
             )
-            if request.serial == nil {
-                request.serial = inspectorSerials[flow.id]
-            }
-            return request
+        )
+        if inspectorRows != output.rows {
+            inspectorRows = output.rows
         }
-        let query = inspectorFilter.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !query.isEmpty {
-            rows = rows.filter {
-                $0.url.localizedCaseInsensitiveContains(query)
-                    || $0.appName.localizedCaseInsensitiveContains(query)
-                    || $0.policyLabel.localizedCaseInsensitiveContains(query)
-                    || $0.statusLabel.localizedCaseInsensitiveContains(query)
-                    || $0.protocolLabel.localizedCaseInsensitiveContains(query)
-                    || $0.idLabel.localizedCaseInsensitiveContains(query)
-            }
+        if inspectorGroupRows != output.groups {
+            inspectorGroupRows = output.groups
         }
-        return rows
+        if inspectorAllCount != output.allCount {
+            inspectorAllCount = output.allCount
+        }
     }
 
     var selectedInspectorRequest: InspectorRequest? {
         guard let selectedInspectorRequestID else { return nil }
-        return inspectorRequests.first { $0.id == selectedInspectorRequestID }
+        return inspectorRows.first { $0.id == selectedInspectorRequestID }
     }
 
+    /// Clears finished requests; open ones stay listed while they are live.
     func clearInspector() {
-        inspectorRecentFlows = []
-        selectedInspectorRequestID = nil
+        inspectorHistory.clear()
+        inspectorFlows = inspectorHistory.flows
+        if let selected = selectedInspectorRequestID,
+           !inspectorFlows.contains(where: { $0.id == selected }) {
+            selectedInspectorRequestID = nil
+        }
         mixedPortRuntime.clearFlows()
         Task { await dashboard.vpn.clearFlows() }
     }
@@ -577,33 +614,6 @@ final class AppModel {
         if inspectorSerials.count > flows.count * 2 + 256 {
             let live = Set(flows.map(\.id))
             inspectorSerials = inspectorSerials.filter { live.contains($0.key) }
-        }
-    }
-
-    /// Sidebar group counts for App / Host mode.
-    var inspectorGroupRows: [InspectorGroupRow] {
-        var counts: [String: Int] = [:]
-        var titles: [String: String] = [:]
-        var icons: [String: (bundleID: String?, path: String?, placeholder: String?)] = [:]
-        for request in inspectorRequests {
-            let key = inspectorGrouping == .app ? request.accountingKey : request.hostLabel
-            counts[key, default: 0] += 1
-            if titles[key] == nil {
-                titles[key] = inspectorGrouping == .app ? request.appName : key
-            }
-            if icons[key] == nil {
-                icons[key] = (request.appBundleID, request.appExecutablePath, request.placeholderSystemImage)
-            }
-        }
-        return counts.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }.map { key in
-            InspectorGroupRow(
-                id: key,
-                title: titles[key] ?? key,
-                count: counts[key] ?? 0,
-                bundleID: icons[key]?.bundleID,
-                executablePath: icons[key]?.path,
-                placeholderSystemImage: icons[key]?.placeholder
-            )
         }
     }
 

@@ -13,6 +13,14 @@ enum AppIcon {
         return cache
     }()
 
+    /// Keys that resolved to no icon, so table rows redrawn every second do
+    /// not repeat the LaunchServices lookup.
+    private static let misses: NSCache<NSString, NSNull> = {
+        let cache = NSCache<NSString, NSNull>()
+        cache.countLimit = 256
+        return cache
+    }()
+
     private static let thumbnail: CGFloat = 32
 
     static func nsImage(bundleID: String?, executablePath: String?) -> NSImage? {
@@ -21,7 +29,11 @@ enum AppIcon {
         if let hit = cache.object(forKey: cacheKey as NSString) {
             return hit
         }
+        if misses.object(forKey: cacheKey as NSString) != nil {
+            return nil
+        }
         guard let raw = loadRaw(bundleID: bundleID, executablePath: executablePath) else {
+            misses.setObject(NSNull(), forKey: cacheKey as NSString)
             return nil
         }
         let small = resized(raw, to: thumbnail)

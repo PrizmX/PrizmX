@@ -3,29 +3,43 @@ import SwiftUI
 import PrizmXServices
 
 struct InspectorRequest: Identifiable, Hashable, Sendable {
-    var id: UUID
-    var serial: UInt64?
-    var timestamp: Date
-    var appName: String
-    var appBundleID: String?
-    var appExecutablePath: String?
-    var closed: Bool
-    var policy: String
-    var rule: String
-    var uploadBytes: UInt64
-    var downloadBytes: UInt64
-    var url: String
-    var milliseconds: Int
-    var clientEnd: String
-    var remoteEnd: String
-    var port: UInt16
-    var isLANClient: Bool
-    var lanAddress: String?
-    var placeholderSystemImage: String?
+    let id: UUID
+    let serial: UInt64?
+    let timestamp: Date
+    let appName: String
+    let appBundleID: String?
+    let appExecutablePath: String?
+    let closed: Bool
+    let policy: String
+    let rule: String
+    let uploadBytes: UInt64
+    let downloadBytes: UInt64
+    let url: String
+    let milliseconds: Int
+    let clientEnd: String
+    let remoteEnd: String
+    let port: UInt16
+    let isLANClient: Bool
+    let lanAddress: String?
+    let placeholderSystemImage: String?
+    // Built once per row: filter, grouping and sort read these for every row
+    // on each refresh, and the table for every visible cell.
+    let idLabel: String
+    let timeLabel: String
+    /// Close reason mapped for the table. Raw `eof` is Completed.
+    let statusLabel: String
+    let policyLabel: String
+    let protocolLabel: String
+    /// Stable Apps / Inspector grouping key (bundle ID when present).
+    let accountingKey: String
+    /// Host without port, for Host grouping.
+    let hostLabel: String
+    private let searchText: String
 
-    init(flow: FlowRecord, lanDevice: LANDevice? = nil) {
+    /// `fallbackSerial` numbers flows from tunnels that send none.
+    init(flow: FlowRecord, lanDevice: LANDevice? = nil, fallbackSerial: UInt64? = nil) {
         id = flow.id
-        serial = flow.serial
+        serial = flow.serial ?? fallbackSerial
         timestamp = flow.startedAt
         if let lanDevice {
             appName = lanDevice.name
@@ -59,21 +73,41 @@ struct InspectorRequest: Identifiable, Hashable, Sendable {
         clientEnd = flow.clientEnd
         remoteEnd = flow.remoteEnd
         port = flow.endpoint.port
+
+        idLabel = serial.map { "\($0)" } ?? "—"
+        timeLabel = timestamp.formatted(date: .numeric, time: .standard)
+        if !closed {
+            statusLabel = "Active"
+        } else if clientEnd == "write-error" || remoteEnd == "error" {
+            statusLabel = "Failed"
+        } else {
+            statusLabel = "Completed"
+        }
+        let match = Self.ruleMatchLabel(rule)
+        policyLabel = match.isEmpty ? policy : "\(policy) (\(match))"
+        switch port {
+        case 443, 8443: protocolLabel = "HTTPS"
+        case 80, 8080: protocolLabel = "HTTP"
+        default: protocolLabel = "TCP"
+        }
+        if let lanAddress {
+            accountingKey = "lan:\(lanAddress)"
+        } else if let appBundleID, !appBundleID.isEmpty {
+            accountingKey = appBundleID
+        } else {
+            accountingKey = appName
+        }
+        hostLabel = Self.host(of: url)
+        searchText = [url, appName, policyLabel, statusLabel, protocolLabel, idLabel].joined(separator: "\n")
     }
 
-    var idLabel: String {
-        serial.map { "\($0)" } ?? "—"
+    /// Filter field match (case-insensitive) on URL, app, policy, status,
+    /// protocol or ID.
+    func matches(_ query: String) -> Bool {
+        searchText.localizedCaseInsensitiveContains(query)
     }
 
-    /// Stable Apps / Inspector grouping key (bundle ID when present).
-    var accountingKey: String {
-        if let lanAddress { return "lan:\(lanAddress)" }
-        if let appBundleID, !appBundleID.isEmpty { return appBundleID }
-        return appName
-    }
-
-    /// Host without port, for Host grouping.
-    var hostLabel: String {
+    private static func host(of url: String) -> String {
         if url.hasPrefix("["), let end = url.firstIndex(of: "]") {
             return String(url[url.startIndex...end])
         }
@@ -81,23 +115,6 @@ struct InspectorRequest: Identifiable, Hashable, Sendable {
             return String(url[..<colon])
         }
         return url
-    }
-
-    var timeLabel: String {
-        timestamp.formatted(date: .numeric, time: .standard)
-    }
-
-    /// Close reason mapped for the table. Raw `eof` is Completed.
-    var statusLabel: String {
-        if !closed { return "Active" }
-        if clientEnd == "write-error" || remoteEnd == "error" { return "Failed" }
-        return "Completed"
-    }
-
-    var policyLabel: String {
-        let match = Self.ruleMatchLabel(rule)
-        if match.isEmpty { return policy }
-        return "\(policy) (\(match))"
     }
 
     /// `TYPE,payload,policy` from `inspectorLabel` — drop the trailing policy,
@@ -122,14 +139,6 @@ struct InspectorRequest: Identifiable, Hashable, Sendable {
         }
         let seconds = ms / 1_000
         return "\(seconds / 60)m \(seconds % 60)s"
-    }
-
-    var protocolLabel: String {
-        switch port {
-        case 443, 8443: "HTTPS"
-        case 80, 8080: "HTTP"
-        default: "TCP"
-        }
     }
 
     private var durationMilliseconds: Int {
@@ -177,9 +186,6 @@ struct InspectorPane: View {
             }
         }
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
-        .onChange(of: appModel.inspectorGrouping) { _, _ in
-            appModel.inspectorSelectedGroup = ""
-        }
     }
 
     private var sidebarToggleButton: some View {
@@ -195,7 +201,7 @@ struct InspectorPane: View {
         return InspectorSidebarList(
             selection: $appModel.inspectorSelectedGroup,
             allTitle: allGroupTitle,
-            allCount: appModel.inspectorRequests.count,
+            allCount: appModel.inspectorAllCount,
             rows: appModel.inspectorGroupRows,
             grouping: appModel.inspectorGrouping
         )
@@ -221,9 +227,6 @@ struct InspectorPane: View {
 /// Detail column. Kept separate so sidebar collapse does not re-render it.
 private struct InspectorDetail: View {
     @Environment(AppModel.self) private var appModel
-    @State private var sortOrder: [KeyPathComparator<InspectorRequest>] = [
-        KeyPathComparator(\InspectorRequest.timestamp, order: .reverse)
-    ]
 
     var body: some View {
         @Bindable var appModel = appModel
@@ -248,9 +251,9 @@ private struct InspectorDetail: View {
                     .labelStyle(.iconOnly)
                     .disabled(
                         appModel.inspectorScope == .active
-                            || appModel.inspectorRecentFlows.isEmpty
+                            || !appModel.inspectorFlows.contains(where: \.closed)
                     )
-                    .help("Clear recent flows")
+                    .help("Clear finished requests")
                 }
                 // Break the pill group: without a spacer the Clear button and
                 // the search field are rendered as one capsule.
@@ -261,14 +264,19 @@ private struct InspectorDetail: View {
             }
     }
 
+    /// Rows come filtered, grouped and sorted from the model; the view does no
+    /// per-row work beyond the visible cells.
     private var requestTable: some View {
         Table(
-            displayedRequests.sorted(using: sortOrder),
+            appModel.inspectorRows,
             selection: Binding(
                 get: { appModel.selectedInspectorRequestID },
                 set: { appModel.selectedInspectorRequestID = $0 }
             ),
-            sortOrder: $sortOrder
+            sortOrder: Binding(
+                get: { appModel.inspectorSortOrder },
+                set: { appModel.inspectorSortOrder = $0 }
+            )
         ) {
             TableColumn("ID", value: \.sortSerial) { (item: InspectorRequest) in
                 Text(item.idLabel)
@@ -336,23 +344,13 @@ private struct InspectorDetail: View {
         }
         .tableStyle(.inset)
         .overlay {
-            if displayedRequests.isEmpty {
+            if appModel.inspectorRows.isEmpty {
                 ContentUnavailableView {
                     Label("No Requests", systemImage: "list.bullet.rectangle")
                 } description: {
                     Text(emptyDescription)
                 }
             }
-        }
-    }
-
-    private var displayedRequests: [InspectorRequest] {
-        let rows = appModel.inspectorRequests
-        let selected = appModel.inspectorSelectedGroup
-        guard !selected.isEmpty else { return rows }
-        return rows.filter {
-            let key = appModel.inspectorGrouping == .app ? $0.accountingKey : $0.hostLabel
-            return key == selected
         }
     }
 

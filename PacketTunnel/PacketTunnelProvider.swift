@@ -31,6 +31,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         var useFakeIP = true
         var systemDNS: [String] = []
         var ipv6FakeIP = false
+        /// The app's mixed-port listeners and the table reader that finds
+        /// their clients for `ProxyClientStore`.
+        var attributor: ProcessFlowAttributor?
+        var proxyListenPorts: Set<UInt16> = []
     }
 
     private let shared = OSAllocatedUnfairLock(uncheckedState: SharedState())
@@ -140,6 +144,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
         let attributor = ProcessFlowAttributor()
         let engine = try boot.makeEngine(flowAttributor: attributor)
+        // Same profile the app's SystemProxyRuntime listens with.
+        let listenPorts = Set(InboundListenConfig.parse(from: boot.configText).sockets.map(\.port))
+        shared.withLockUnchecked { state in
+            state.attributor = attributor
+            state.proxyListenPorts = listenPorts
+        }
         self.ipv6FakeIP = engine.dns.settings.ipv6
         let nodeCount = engine.nodeManager.nodesByID.count
         log.info("engine ready rules=\(engine.router.rules.count) nodes=\(nodeCount)")
@@ -280,6 +290,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             state.relayTask = nil
             state.engine = nil
             state.stack = nil
+            state.attributor = nil
             return snapshot
         }
         taken.pathMonitor?.cancel()
@@ -321,6 +332,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         task?.cancel()
         lastMetrics.withLock { $0 = .zero }
         TunnelMetricsStore.clear()
+        ProxyClientStore.clear()
     }
 
     private func publishMetrics() {
@@ -329,6 +341,19 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         if !TunnelMetricsStore.save(snapshot) {
             TunnelLog.write(.error, "metrics file write failed")
         }
+        publishProxyClients()
+    }
+
+    /// Root sees every socket; the sandboxed app attributes the mixed-port
+    /// flows it could not place from this file. Written even when empty, so
+    /// the app can tell a missing client from a tunnel that is not publishing.
+    private func publishProxyClients() {
+        let (attributor, ports) = shared.withLockUnchecked { ($0.attributor, $0.proxyListenPorts) }
+        guard let attributor else { return }
+        // Stamped before the table read: every socket opened before this
+        // instant is in the list if it is still alive (the app relies on it).
+        let readAt = Date().timeIntervalSince1970
+        ProxyClientStore.save(attributor.loopbackClients(listenPorts: ports), writtenAt: readAt)
     }
 
     private func reply(

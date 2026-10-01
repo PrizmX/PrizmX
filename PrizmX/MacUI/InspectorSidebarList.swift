@@ -83,6 +83,10 @@ struct InspectorSidebarList: NSViewRepresentable {
         var isActive = true
         var nodes: [Node] = []
         var grouping: InspectorGrouping = .app
+        /// Set while the list reloads or selects in code. AppKit moves the
+        /// selection on its own then (to the first row when the selected
+        /// item is gone); only user selection may write the binding.
+        private var isApplying = false
         private var lastAllTitle = ""
         private var lastAllCount = -1
         private var lastRowIDs: [String] = []
@@ -142,7 +146,9 @@ struct InspectorSidebarList: NSViewRepresentable {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0
                 context.allowsImplicitAnimation = false
+                isApplying = true
                 outline?.reloadData()
+                isApplying = false
                 applySelection(selection)
             }
         }
@@ -155,7 +161,9 @@ struct InspectorSidebarList: NSViewRepresentable {
             let row = outline.row(forItem: node)
             guard row >= 0 else { return }
             if outline.selectedRow != row {
+                isApplying = true
                 outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                isApplying = false
             }
             outline.refreshEmphasis()
         }
@@ -190,7 +198,7 @@ struct InspectorSidebarList: NSViewRepresentable {
         }
 
         func outlineViewSelectionDidChange(_ notification: Notification) {
-            guard isActive, let outline, outline.window != nil, outline.selectedRow >= 0 else { return }
+            guard isActive, !isApplying, let outline, outline.window != nil, outline.selectedRow >= 0 else { return }
             guard let node = outline.item(atRow: outline.selectedRow) as? Node else { return }
             if selection.wrappedValue != node.id {
                 selection.wrappedValue = node.id
