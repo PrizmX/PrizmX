@@ -100,13 +100,11 @@ struct MenuBarPanel: View {
                 .help(appModel.isVPNOn ? "Disconnect" : "Connect")
             }
 
-            Picker("Mode", selection: $appModel.outboundMode) {
-                ForEach(OutboundMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            AppSegmentedControl(
+                options: OutboundMode.allCases.map { ($0, $0.title) },
+                selection: $appModel.outboundMode,
+                fill: true
+            )
 
             Toggle("System Proxy", isOn: $appModel.systemProxyEnabled)
                 .toggleStyle(.switch)

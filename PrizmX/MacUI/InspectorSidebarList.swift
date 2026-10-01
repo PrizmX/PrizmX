@@ -140,9 +140,9 @@ struct InspectorSidebarList: NSViewRepresentable {
             lastRowIDs = nextIDs
             lastRowTitles = nextTitles
             lastRowCounts = nextCounts
-            // SwiftUI transactions (the App/Host capsule switch) leak their
-            // animation into representable updates; keep the AppKit reload
-            // instant so the list never trails the thumb animation.
+            // SwiftUI transactions can leak their animation into
+            // representable updates; keep the AppKit reload instant so the
+            // list switches together with the App / Host control.
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0
                 context.allowsImplicitAnimation = false

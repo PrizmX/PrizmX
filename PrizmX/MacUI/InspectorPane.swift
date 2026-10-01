@@ -207,12 +207,12 @@ struct InspectorPane: View {
         )
         .navigationSplitViewColumnWidth(min: 180, ideal: 208, max: 260)
         .safeAreaBar(edge: .top) {
-            CapsuleSegmentedControl(
-                options: InspectorGrouping.allCases,
+            AppSegmentedControl(
+                options: InspectorGrouping.allCases.map { ($0, $0.title) },
                 selection: $appModel.inspectorGrouping,
-                title: \.title
+                size: .small,
+                fill: true
             )
-            .frame(maxWidth: .infinity)
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
         }
@@ -241,8 +241,7 @@ private struct InspectorDetail: View {
                                 .help(scope.title)
                         }
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
+                    .appToolbarSegmentedStyle()
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button("Clear", systemImage: "xmark.circle") {

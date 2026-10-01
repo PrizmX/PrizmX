@@ -36,7 +36,7 @@ struct NodeSelectPane: View {
                         Text("Policy").tag(NodeListGrouping.policy)
                         Text("Region").tag(NodeListGrouping.region)
                     }
-                    .pickerStyle(.segmented)
+                    .appToolbarSegmentedStyle()
                     .frame(minWidth: 160)
                     .help("Group by policy or region")
                 }

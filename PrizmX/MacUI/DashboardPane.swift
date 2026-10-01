@@ -269,9 +269,11 @@ struct HomePane: View {
             hintIcon: appModel.outboundMode.systemImage,
             hintText: appModel.outboundMode.summary
         ) {
-            WidgetCapsulePicker(
+            AppSegmentedControl(
                 options: OutboundMode.allCases.map { ($0, $0.title) },
-                selection: $model.outboundMode
+                selection: $model.outboundMode,
+                size: .large,
+                fill: true
             )
         }
     }
@@ -370,10 +372,10 @@ struct HomePane: View {
         let period = TrafficPeriod(rawValue: trafficPeriodRaw) ?? .day
         let totals = appModel.trafficLedger.totals(for: period)
         return TrafficCard(totals: totals) {
-            WidgetCapsulePicker(
+            AppSegmentedControl(
                 options: TrafficPeriod.allCases.map { ($0.rawValue, $0.title) },
                 selection: $trafficPeriodRaw,
-                compact: true
+                size: .small
             )
         }
     }
@@ -388,11 +390,11 @@ struct HomePane: View {
                 AppIcon.image(bundleID: row.bundleID, executablePath: nil)
             }
         ) {
-            WidgetCapsulePicker(
+            AppSegmentedControl(
                 options: TrafficRankScope.allCases.map { ($0.rawValue, $0.title) },
                 selection: $rankScopeRaw,
-                compact: true,
-                expands: true
+                size: .small,
+                fill: true
             )
         }
     }
