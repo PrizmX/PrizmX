@@ -10,7 +10,7 @@ struct InspectorRequest: Identifiable, Hashable, Sendable {
     let appBundleID: String?
     let appExecutablePath: String?
     let closed: Bool
-    let policy: String
+    let route: FlowRoute
     let rule: String
     let uploadBytes: UInt64
     let downloadBytes: UInt64
@@ -28,7 +28,10 @@ struct InspectorRequest: Identifiable, Hashable, Sendable {
     let timeLabel: String
     /// Close reason mapped for the table. Raw `eof` is Completed.
     let statusLabel: String
-    let policyLabel: String
+    /// Rule policy to exit: `🎯Direct → DIRECT`, `AI → 🇺🇸 San Jose 07`.
+    let routeLabel: String
+    /// Matched rule without its policy: `DOMAIN-SUFFIX,claude.ai`.
+    let ruleLabel: String
     let protocolLabel: String
     /// Stable Apps / Inspector grouping key (bundle ID when present).
     let accountingKey: String
@@ -64,7 +67,7 @@ struct InspectorRequest: Identifiable, Hashable, Sendable {
             placeholderSystemImage = nil
         }
         closed = flow.closed
-        policy = flow.via
+        route = flow.route
         rule = flow.rule
         uploadBytes = flow.uplinkBytes
         downloadBytes = flow.downlinkBytes
@@ -83,8 +86,9 @@ struct InspectorRequest: Identifiable, Hashable, Sendable {
         } else {
             statusLabel = "Completed"
         }
+        routeLabel = route.description
         let match = Self.ruleMatchLabel(rule)
-        policyLabel = match.isEmpty ? policy : "\(policy) (\(match))"
+        ruleLabel = match.isEmpty ? "—" : match
         switch port {
         case 443, 8443: protocolLabel = "HTTPS"
         case 80, 8080: protocolLabel = "HTTP"
@@ -98,11 +102,11 @@ struct InspectorRequest: Identifiable, Hashable, Sendable {
             accountingKey = appName
         }
         hostLabel = Self.host(of: url)
-        searchText = [url, appName, policyLabel, statusLabel, protocolLabel, idLabel].joined(separator: "\n")
+        searchText = [url, appName, routeLabel, ruleLabel, statusLabel, protocolLabel, idLabel].joined(separator: "\n")
     }
 
-    /// Filter field match (case-insensitive) on URL, app, policy, status,
-    /// protocol or ID.
+    /// Filter field match (case-insensitive) on URL, app, route, rule,
+    /// status, protocol or ID.
     func matches(_ query: String) -> Bool {
         searchText.localizedCaseInsensitiveContains(query)
     }
@@ -311,30 +315,39 @@ private struct InspectorDetail: View {
                 Text(item.statusLabel)
             }
             .width(90)
-            TableColumn("Policy", value: \.policyLabel) { item in
-                Text(item.policyLabel)
+            TableColumn("Policy", value: \.routeLabel) { item in
+                Text(item.routeLabel)
                     .lineLimit(1)
             }
-            .width(min: 140, ideal: 180)
-            TableColumn("↓", value: \.downloadBytes) { item in
-                Text(ByteRateFormatter.byteCount(item.downloadBytes))
-                    .font(.body.monospacedDigit())
+            .width(min: 140, ideal: 200)
+            TableColumn("Rule", value: \.ruleLabel) { item in
+                Text(item.ruleLabel)
+                    .lineLimit(1)
+                    .foregroundStyle(.secondary)
             }
-            .width(70)
-            TableColumn("↑", value: \.uploadBytes) { item in
-                Text(ByteRateFormatter.byteCount(item.uploadBytes))
-                    .font(.body.monospacedDigit())
+            .width(min: 120, ideal: 180)
+            // A column builder takes at most 10 columns; group the numbers.
+            Group {
+                TableColumn("↓", value: \InspectorRequest.downloadBytes) { (item: InspectorRequest) in
+                    Text(ByteRateFormatter.byteCount(item.downloadBytes))
+                        .font(.body.monospacedDigit())
+                }
+                .width(70)
+                TableColumn("↑", value: \InspectorRequest.uploadBytes) { (item: InspectorRequest) in
+                    Text(ByteRateFormatter.byteCount(item.uploadBytes))
+                        .font(.body.monospacedDigit())
+                }
+                .width(70)
+                TableColumn("Duration", value: \InspectorRequest.sortDuration) { (item: InspectorRequest) in
+                    Text(item.durationLabel)
+                        .font(.body.monospacedDigit())
+                }
+                .width(80)
+                TableColumn("Protocol", value: \InspectorRequest.protocolLabel) { (item: InspectorRequest) in
+                    Text(item.protocolLabel)
+                }
+                .width(70)
             }
-            .width(70)
-            TableColumn("Duration", value: \.sortDuration) { item in
-                Text(item.durationLabel)
-                    .font(.body.monospacedDigit())
-            }
-            .width(80)
-            TableColumn("Protocol", value: \.protocolLabel) { item in
-                Text(item.protocolLabel)
-            }
-            .width(70)
             TableColumn("URL", value: \.url) { item in
                 Text(item.url)
                     .font(.body.monospaced())
