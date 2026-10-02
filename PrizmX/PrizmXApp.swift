@@ -21,12 +21,13 @@ struct PrizmXApp: App {
 
         Window("Select Node", id: AppWindowID.nodePicker) {
             NavigationStack {
-                NodeSelectPane(showsToolbar: true, showsDoneButton: true)
+                NodeSelectPane()
             }
             .environment(appModel)
-            .frame(minWidth: 420, minHeight: 480)
+            // Below 540 pt the toolbar pushes the search field into overflow.
+            .frame(minWidth: 540, minHeight: 480)
         }
-        .defaultSize(width: 520, height: 560)
+        .defaultSize(width: 600, height: 560)
         .defaultLaunchBehavior(.suppressed)
 
         Window("Inspector", id: AppWindowID.inspector) {
