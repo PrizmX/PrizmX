@@ -54,13 +54,15 @@ final class HomeWidgetLayout {
         order = parsed
     }
 
-    func move(_ dragged: HomeWidgetID, before target: HomeWidgetID) {
-        guard dragged != target else { return }
-        guard let from = order.firstIndex(of: dragged),
+    /// Drops `dragged` into `target`'s slot; the target and everything in
+    /// between shift one place toward where `dragged` came from (Home screen
+    /// style), so a drop on either neighbor swaps the two.
+    func move(_ dragged: HomeWidgetID, onto target: HomeWidgetID) {
+        guard dragged != target,
+              let from = order.firstIndex(of: dragged),
               let to = order.firstIndex(of: target) else { return }
-        let item = order.remove(at: from)
-        // After removal the target shifts left by one when dragging forward.
-        order.insert(item, at: from < to ? to - 1 : to)
+        order.remove(at: from)
+        order.insert(dragged, at: to)
     }
 
     func packed(columns: Int = WidgetGrid.columns) -> [PlacedWidget] {

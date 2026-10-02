@@ -120,7 +120,7 @@ struct HomePane: View {
                 guard let raw = items.first, let dragged = HomeWidgetID(rawValue: raw) else {
                     return false
                 }
-                layout.move(dragged, before: item.id)
+                layout.move(dragged, onto: item.id)
                 didShowReorderTip = true
                 return true
             } isTargeted: { hovering in
