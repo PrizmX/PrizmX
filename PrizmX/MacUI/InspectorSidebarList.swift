@@ -191,7 +191,7 @@ struct InspectorSidebarList: NSViewRepresentable {
                 owner: nil
             ) as? InspectorSidebarCell ?? InspectorSidebarCell()
             cell.textField?.stringValue = node.title
-            cell.countField.stringValue = "\(node.count)"
+            cell.countField.stringValue = node.count > 999 ? "999+" : "\(node.count)"
             cell.imageView?.image = icon(for: node)
             cell.imageView?.contentTintColor = .secondaryLabelColor
             return cell
@@ -279,12 +279,15 @@ private final class InspectorSidebarCell: NSTableCellView {
         field.translatesAutoresizingMaskIntoConstraints = false
         field.lineBreakMode = .byTruncatingTail
         field.font = .systemFont(ofSize: NSFont.systemFontSize)
+        // A narrow sidebar truncates the name, never the count.
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         countField.translatesAutoresizingMaskIntoConstraints = false
         countField.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         countField.textColor = .secondaryLabelColor
         countField.alignment = .right
         countField.setContentHuggingPriority(.required, for: .horizontal)
+        countField.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         addSubview(image)
         addSubview(field)
