@@ -207,6 +207,11 @@ struct SettingsPane: View {
                     }
                 }
                 .help("Idle stays gray. System Proxy uses the template prism. This only changes the TUN icon.")
+
+                Toggle(isOn: $appModel.menuBarSpeedEnabled) {
+                    Text("Show Network Speed")
+                    Text("Upload and download rates beside the menu bar icon while proxying.")
+                }
             }
 
             Section("Events") {

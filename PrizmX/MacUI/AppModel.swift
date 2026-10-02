@@ -191,6 +191,7 @@ final class AppModel {
         static let tunModeEnabled = "tunModeEnabled"
         static let allowLANEnabled = "allowLANEnabled"
         static let menuBarConnectedStyle = "menuBarConnectedStyle"
+        static let menuBarSpeedEnabled = "menuBarSpeedEnabled"
         static let outboundMode = "outboundMode"
     }
 
@@ -321,10 +322,20 @@ final class AppModel {
         }
     }
 
-    /// Menu-bar popover open state, derived from window visibility tracking.
-    var menuPanelPresented = false {
-        didSet { updateUIVisibility() }
+    /// Settings switch for the upload / download rates beside the status icon.
+    var menuBarSpeedEnabled: Bool {
+        didSet {
+            guard menuBarSpeedEnabled != oldValue else { return }
+            UserDefaults.standard.set(menuBarSpeedEnabled, forKey: DefaultsKey.menuBarSpeedEnabled)
+        }
     }
+
+    /// A root popup menu (in practice the menu-bar dropdown) is on screen.
+    /// Gates the dropdown's live chart and speed-history publishing.
+    private(set) var menuOpen = false
+    /// When the dropdown last opened. Changes once per open, never per
+    /// second: SwiftUI re-applies every menu item whenever the content changes.
+    private(set) var menuOpenedAt = Date.now
     /// True while any titled app window is on screen and not occluded.
     /// Gates live-chart publishing and wall-clock TimelineViews.
     private(set) var anyWindowVisible = false
@@ -360,6 +371,7 @@ final class AppModel {
             tunModeEnabled = true
             allowLANEnabled = false
             menuBarConnectedStyle = .monochrome
+            menuBarSpeedEnabled = true
             outboundMode = .rule
             eventsLogLevel = .info
             sessionStartedAt = Date().addingTimeInterval(-3_723)
@@ -394,6 +406,7 @@ final class AppModel {
             menuBarConnectedStyle = MenuBarConnectedStyle(
                 rawValue: UserDefaults.standard.string(forKey: DefaultsKey.menuBarConnectedStyle) ?? ""
             ) ?? .monochrome
+            menuBarSpeedEnabled = UserDefaults.standard.object(forKey: DefaultsKey.menuBarSpeedEnabled) as? Bool ?? true
             outboundMode = OutboundMode(rawValue: UserDefaults.standard.string(forKey: DefaultsKey.outboundMode) ?? "") ?? .rule
             eventsLogLevel = TunnelLog.minimumLevel
             if dashboard.status == .connected {
@@ -408,6 +421,7 @@ final class AppModel {
             installKeyMonitor()
             installUIVisibilityTracking()
             startTrafficIngest()
+            trackSessionClock()
             networkLink.onChange = { [weak self] in
                 self?.scheduleEgressRefresh()
             }
@@ -528,6 +542,11 @@ final class AppModel {
         return .idle
     }
 
+    /// Rates only mean something while traffic goes through PrizmX.
+    var showsMenuBarSpeed: Bool {
+        menuBarSpeedEnabled && menuBarSessionState != .idle
+    }
+
     var selectedNodeLatency: Double? {
         guard let id = nodeList.selectedNodeID else { return nil }
         return nodeList.latencyByNodeID[id] ?? nil
@@ -646,6 +665,33 @@ final class AppModel {
         }
     }
 
+    /// Reported by `MenuBarDropdownHooks` from menu tracking.
+    func menuDidOpen() {
+        menuOpenedAt = .now
+        if !menuOpen {
+            menuOpen = true
+            updateUIVisibility()
+        }
+    }
+
+    func menuDidClose() {
+        if menuOpen {
+            menuOpen = false
+            updateUIVisibility()
+        }
+    }
+
+    /// Switches the active profile from outside the Profiles pane (menu bar).
+    func activateProfile(id: UUID) {
+        guard id != dashboard.profiles.activeProfileID else { return }
+        do {
+            try dashboard.profiles.selectActiveProfile(id: id)
+            didChangeActiveProfile()
+        } catch {
+            dashboard.profiles.recordError(error)
+        }
+    }
+
     /// Downloads a subscription (errors surface via `profiles.lastError`)
     /// and reloads the live engine when it is the active profile.
     func refreshSubscription(id: UUID) async {
@@ -753,6 +799,19 @@ final class AppModel {
         }
     }
 
+    /// Follows the tunnel status from the model, so the uptime keeps counting
+    /// in menu-bar-only mode with no window mounted to watch it.
+    private func trackSessionClock() {
+        _ = withObservationTracking {
+            dashboard.status
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                self?.refreshSessionClock()
+                self?.trackSessionClock()
+            }
+        }
+    }
+
     func refreshSessionClock() {
         if dashboard.status == .connected {
             if sessionStartedAt == nil {
@@ -818,7 +877,7 @@ extension AppModel {
 
     /// Live charts and clocks only earn their keep while some surface is
     /// visible. Window close / miniaturize / occlusion all land here; the
-    /// menu-bar popover reports through `menuPanelPresented`.
+    /// menu-bar dropdown reports through `menuDidOpen` / `menuDidClose`.
     private func installUIVisibilityTracking() {
         // The macOS 27 SDK dropped the Visible notifications; occlusion
         // state flips whenever a window is ordered in or out.
@@ -845,24 +904,13 @@ extension AppModel {
     }
 
     private func updateUIVisibility() {
-        var windowVisible = false
-        var panelVisible = false
-        for window in NSApp.windows where window.isVisible && window.occlusionState.contains(.visible) {
-            if window.styleMask.contains(.titled) {
-                windowVisible = true
-            } else if window.frame.height >= 50 {
-                // The menu-bar popover panel; status-item label windows are
-                // menu-bar height and never reach this branch.
-                panelVisible = true
-            }
+        let windowVisible = NSApp.windows.contains {
+            $0.isVisible && $0.occlusionState.contains(.visible) && $0.styleMask.contains(.titled)
         }
         if windowVisible != anyWindowVisible {
             anyWindowVisible = windowVisible
         }
-        if panelVisible != menuPanelPresented {
-            menuPanelPresented = panelVisible
-        }
-        dashboard.setSpeedHistoryPublishing(windowVisible || panelVisible)
+        dashboard.setSpeedHistoryPublishing(windowVisible || menuOpen)
     }
 
     private func installKeyMonitor() {

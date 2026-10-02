@@ -45,12 +45,6 @@ struct SurgeStyleMainWindow: View {
             }
         }
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
-        .onChange(of: appModel.dashboard.status) { _, _ in
-            appModel.refreshSessionClock()
-        }
-        .onAppear {
-            appModel.refreshSessionClock()
-        }
     }
 
     private var sidebarToggleButton: some View {

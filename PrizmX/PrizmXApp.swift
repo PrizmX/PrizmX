@@ -38,14 +38,14 @@ struct PrizmXApp: App {
         .defaultLaunchBehavior(.suppressed)
 
         MenuBarExtra {
-            MenuBarPanel()
+            MenuBarMenu()
                 .environment(appModel)
         } label: {
             MenuBarStatusLabel()
                 .environment(appModel)
                 .onAppear { appModel.applyLaunchPolicy() }
         }
-        .menuBarExtraStyle(.window)
+        .menuBarExtraStyle(.menu)
     }
 }
 
