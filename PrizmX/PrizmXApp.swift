@@ -5,6 +5,10 @@ import SwiftUI
 struct PrizmXApp: App {
     @State private var appModel = AppModel()
 
+    init() {
+        Analytics.start()
+    }
+
     var body: some Scene {
         Window("PrizmX", id: AppWindowID.main) {
             SurgeStyleMainWindow()

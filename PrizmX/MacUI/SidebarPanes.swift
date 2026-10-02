@@ -225,6 +225,13 @@ struct SettingsPane: View {
                 }
             }
 
+            Section("Privacy") {
+                Toggle(isOn: $appModel.analyticsEnabled) {
+                    Text("Share Anonymous Usage Data")
+                    Text("App launches, versions, and whether TUN or System Proxy is on. No profiles, nodes or traffic.")
+                }
+            }
+
             Section("Shortcuts") {
                 labeledShortcut("Select node", "⌘K")
                 labeledShortcut("Toggle VPN", "⌘.")

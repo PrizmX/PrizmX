@@ -15,6 +15,7 @@
 		5B7A1104304B1001000A04 /* PrizmXUIEngine in Frameworks */ = {isa = PBXBuildFile; productRef = 5B7A1102304B1001000A02 /* PrizmXUIEngine */; };
 		5B7A1105304B1001000A05 /* PrizmXUIComponents in Frameworks */ = {isa = PBXBuildFile; productRef = 5B7A1103304B1001000A03 /* PrizmXUIComponents */; };
 		5BA11A01305C0101000C01 /* PrizmXAttribution in Frameworks */ = {isa = PBXBuildFile; productRef = 5BA11A02305C0101000C02 /* PrizmXAttribution */; };
+		5BC0A003306A0001000A0003 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = 5BC0A002306A0001000A0002 /* PostHog */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -80,6 +81,7 @@
 				5B6040F8303FEE1400F6C849 /* PrizmXConfig in Frameworks */,
 				5B7A1104304B1001000A04 /* PrizmXUIEngine in Frameworks */,
 				5B7A1105304B1001000A05 /* PrizmXUIComponents in Frameworks */,
+				5BC0A003306A0001000A0003 /* PostHog in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -140,6 +142,7 @@
 				5B6040F9303FEE1400F6C84A /* PrizmXConfig */,
 				5B7A1102304B1001000A02 /* PrizmXUIEngine */,
 				5B7A1103304B1001000A03 /* PrizmXUIComponents */,
+				5BC0A002306A0001000A0002 /* PostHog */,
 			);
 			productName = PrizmX;
 			productReference = 5B60409A303FEE1300F6C632 /* PrizmX.app */;
@@ -202,6 +205,7 @@
 			packageReferences = (
 				5B6040BD303FEE1400F6C70E /* XCLocalSwiftPackageReference "../PrizmX-Foundation" */,
 				5B7A1101304B1001000A01 /* XCLocalSwiftPackageReference "../PrizmX-Kit" */,
+				5BC0A001306A0001000A0001 /* XCRemoteSwiftPackageReference "posthog-ios" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 5B60409B303FEE1300F6C632 /* Products */;
@@ -593,6 +597,17 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		5BC0A001306A0001000A0001 /* XCRemoteSwiftPackageReference "posthog-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/PostHog/posthog-ios.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 3.58.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		5B6040BE303FEE1400F6C70F /* PrizmXTUN */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -628,6 +643,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 5B6040BD303FEE1400F6C70E /* XCLocalSwiftPackageReference "../PrizmX-Foundation" */;
 			productName = PrizmXAttribution;
+		};
+		5BC0A002306A0001000A0002 /* PostHog */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5BC0A001306A0001000A0001 /* XCRemoteSwiftPackageReference "posthog-ios" */;
+			productName = PostHog;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

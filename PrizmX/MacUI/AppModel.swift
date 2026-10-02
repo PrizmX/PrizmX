@@ -330,6 +330,15 @@ final class AppModel {
         }
     }
 
+    /// Settings switch for anonymous usage analytics. `Analytics` owns the
+    /// stored value.
+    var analyticsEnabled: Bool {
+        didSet {
+            guard analyticsEnabled != oldValue else { return }
+            Analytics.setEnabled(analyticsEnabled)
+        }
+    }
+
     /// A root popup menu (in practice the menu-bar dropdown) is on screen.
     /// Gates the dropdown's live chart and speed-history publishing.
     private(set) var menuOpen = false
@@ -372,6 +381,7 @@ final class AppModel {
             allowLANEnabled = false
             menuBarConnectedStyle = .monochrome
             menuBarSpeedEnabled = true
+            analyticsEnabled = true
             outboundMode = .rule
             eventsLogLevel = .info
             sessionStartedAt = Date().addingTimeInterval(-3_723)
@@ -407,6 +417,7 @@ final class AppModel {
                 rawValue: UserDefaults.standard.string(forKey: DefaultsKey.menuBarConnectedStyle) ?? ""
             ) ?? .monochrome
             menuBarSpeedEnabled = UserDefaults.standard.object(forKey: DefaultsKey.menuBarSpeedEnabled) as? Bool ?? true
+            analyticsEnabled = Analytics.isEnabled
             outboundMode = OutboundMode(rawValue: UserDefaults.standard.string(forKey: DefaultsKey.outboundMode) ?? "") ?? .rule
             eventsLogLevel = TunnelLog.minimumLevel
             if dashboard.status == .connected {
@@ -422,6 +433,7 @@ final class AppModel {
             installUIVisibilityTracking()
             startTrafficIngest()
             trackSessionClock()
+            trackAnalyticsProxyState()
             networkLink.onChange = { [weak self] in
                 self?.scheduleEgressRefresh()
             }
@@ -810,6 +822,17 @@ final class AppModel {
                 self?.trackSessionClock()
             }
         }
+    }
+
+    /// Reports settled TUN / System Proxy state to analytics. TUN counts only
+    /// once connected, not while connecting.
+    private func trackAnalyticsProxyState() {
+        let (tun, systemProxy) = withObservationTracking {
+            (dashboard.status == .connected, systemProxyActive)
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.trackAnalyticsProxyState() }
+        }
+        Analytics.updateProxyState(tun: tun, systemProxy: systemProxy)
     }
 
     func refreshSessionClock() {
