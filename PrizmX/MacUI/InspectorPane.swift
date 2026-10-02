@@ -267,94 +267,15 @@ private struct InspectorDetail: View {
             }
     }
 
-    /// Rows come filtered, grouped and sorted from the model; the view does no
-    /// per-row work beyond the visible cells.
+    /// Rows come filtered, grouped and sorted from the model; the table does
+    /// no per-row work beyond the visible cells.
     private var requestTable: some View {
-        Table(
-            appModel.inspectorRows,
-            selection: Binding(
-                get: { appModel.selectedInspectorRequestID },
-                set: { appModel.selectedInspectorRequestID = $0 }
-            ),
-            sortOrder: Binding(
-                get: { appModel.inspectorSortOrder },
-                set: { appModel.inspectorSortOrder = $0 }
-            )
-        ) {
-            TableColumn("ID", value: \.sortSerial) { (item: InspectorRequest) in
-                Text(item.idLabel)
-                    .font(.body.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            .width(50)
-            TableColumn("Time", value: \.timestamp) { item in
-                Text(item.timeLabel)
-                    .font(.body.monospacedDigit())
-                    .lineLimit(1)
-            }
-            .width(150)
-            TableColumn("App", value: \.appName) { item in
-                HStack(spacing: 6) {
-                    if item.isLANClient {
-                        Image(systemName: item.placeholderSystemImage ?? LANDevice.Kind.unknown.systemImage)
-                            .foregroundStyle(.secondary)
-                            .frame(width: 16, height: 16)
-                    } else {
-                        AppIconView(
-                            bundleID: item.appBundleID,
-                            executablePath: item.appExecutablePath,
-                            size: 16
-                        )
-                    }
-                    Text(item.appName)
-                        .lineLimit(1)
-                }
-            }
-            .width(min: 120, ideal: 160)
-            TableColumn("Status", value: \.statusLabel) { item in
-                Text(item.statusLabel)
-            }
-            .width(90)
-            TableColumn("Policy", value: \.routeLabel) { item in
-                Text(item.routeLabel)
-                    .lineLimit(1)
-            }
-            .width(min: 140, ideal: 200)
-            TableColumn("Rule", value: \.ruleLabel) { item in
-                Text(item.ruleLabel)
-                    .lineLimit(1)
-                    .foregroundStyle(.secondary)
-            }
-            .width(min: 120, ideal: 180)
-            // A column builder takes at most 10 columns; group the numbers.
-            Group {
-                TableColumn("↓", value: \InspectorRequest.downloadBytes) { (item: InspectorRequest) in
-                    Text(ByteRateFormatter.byteCount(item.downloadBytes))
-                        .font(.body.monospacedDigit())
-                }
-                .width(70)
-                TableColumn("↑", value: \InspectorRequest.uploadBytes) { (item: InspectorRequest) in
-                    Text(ByteRateFormatter.byteCount(item.uploadBytes))
-                        .font(.body.monospacedDigit())
-                }
-                .width(70)
-                TableColumn("Duration", value: \InspectorRequest.sortDuration) { (item: InspectorRequest) in
-                    Text(item.durationLabel)
-                        .font(.body.monospacedDigit())
-                }
-                .width(80)
-                TableColumn("Protocol", value: \InspectorRequest.protocolLabel) { (item: InspectorRequest) in
-                    Text(item.protocolLabel)
-                }
-                .width(70)
-            }
-            TableColumn("URL", value: \.url) { item in
-                Text(item.url)
-                    .font(.body.monospaced())
-                    .lineLimit(1)
-            }
-        }
-        .tableStyle(.inset)
+        @Bindable var appModel = appModel
+        return InspectorRequestTable(
+            rows: appModel.inspectorRows,
+            selection: $appModel.selectedInspectorRequestID,
+            sortOrder: $appModel.inspectorSortOrder
+        )
         .overlay {
             if appModel.inspectorRows.isEmpty {
                 ContentUnavailableView {
