@@ -19,7 +19,7 @@ Outbound protocols (imported from Clash YAML, Surge INI and sing-box):
 | Direct | — | — | yes | yes |
 | Shadowsocks | native TCP / UDP | AEAD `aes-{128,192,256}-gcm`, `chacha20-ietf-poly1305`; simple-obfs, v2ray-plugin | yes | yes |
 | VMess | TCP, TLS, WebSocket, HTTP upgrade | AEAD (`alterId: 0`), `cipher` auto / aes-128-gcm / chacha20-poly1305 / none / zero | yes | yes (not `zero`) |
-| VLESS | TCP, TLS, REALITY, WebSocket, HTTP upgrade | `flow`: none or `xtls-rprx-vision` | yes | UDP-over-stream. No `xudp` yet |
+| VLESS | TCP, TLS, REALITY, WebSocket, HTTP upgrade | `flow`: none or `xtls-rprx-vision` | yes | UDP-over-stream; XUDP for Vision users |
 | Trojan | TLS (+ WebSocket / HTTP upgrade) | SNI | yes | yes |
 | AnyTLS | TLS 1.3 | SNI, `skip-cert-verify`, session pool | yes | no |
 | HTTP / HTTPS | TCP, TLS | Basic auth, headers | yes | no |
