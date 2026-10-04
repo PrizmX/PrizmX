@@ -998,13 +998,5 @@ extension ProxyProfile {
 }
 
 extension OutboundNode {
-    var protocolLabel: String {
-        switch protocolConfig {
-        case .shadowsocks: "SS"
-        case .vless: "VLESS"
-        case .trojan: "Trojan"
-        case .anytls: "AnyTLS"
-        case .direct: "Direct"
-        }
-    }
+    var protocolLabel: String { protocolConfig.displayName }
 }
