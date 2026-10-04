@@ -18,14 +18,14 @@ Outbound protocols (imported from Clash YAML, Surge INI and sing-box):
 | --- | --- | --- | --- | --- |
 | Direct | — | — | yes | yes |
 | Shadowsocks | native TCP / UDP | AEAD `aes-{128,192,256}-gcm`, `chacha20-ietf-poly1305`; 2022 (`2022-blake3-*`); simple-obfs, v2ray-plugin | yes | yes |
-| VMess | TCP, TLS, WebSocket, HTTP upgrade | AEAD (`alterId: 0`), `cipher` auto / aes-128-gcm / chacha20-poly1305 / none / zero | yes | yes (not `zero`) |
-| VLESS | TCP, TLS, REALITY, WebSocket, HTTP upgrade | `flow`: none or `xtls-rprx-vision` | yes | UDP-over-stream; XUDP for Vision users |
-| Trojan | TLS (+ WebSocket / HTTP upgrade) | SNI | yes | yes |
+| VMess | TCP, TLS, WebSocket, HTTP upgrade, gRPC | AEAD (`alterId: 0`), `cipher` auto / aes-128-gcm / chacha20-poly1305 / none / zero | yes | yes (not `zero`) |
+| VLESS | TCP, TLS, REALITY, WebSocket, HTTP upgrade, gRPC | `flow`: none or `xtls-rprx-vision` | yes | UDP-over-stream; XUDP for Vision users |
+| Trojan | TLS (+ WebSocket / HTTP upgrade / gRPC) | SNI | yes | yes |
 | AnyTLS | TLS 1.3 | SNI, `skip-cert-verify`, session pool | yes | no |
 | HTTP / HTTPS | TCP, TLS | Basic auth, headers | yes | no |
 | SOCKS5 | TCP, TLS | username / password | yes | yes |
 
-Not imported: Hysteria, TUIC, WireGuard, ShadowsocksR, gRPC / HTTP2 transport, `client-fingerprint`, Mux. Details live in [PrizmX-Foundation](https://github.com/PrizmX/PrizmX-Foundation#outbound-protocols).
+Not imported: Hysteria, TUIC, WireGuard, ShadowsocksR, HTTP/2 (`h2`) transport, `client-fingerprint`, Mux. Details live in [PrizmX-Foundation](https://github.com/PrizmX/PrizmX-Foundation#outbound-protocols).
 
 HTTP capture, decrypt, and rewrite are **out of scope** for open-core. Those belong in PrizmX-Premium / PrizmX-Pro.
 
