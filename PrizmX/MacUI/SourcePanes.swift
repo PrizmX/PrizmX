@@ -21,54 +21,24 @@ struct AppsPane: View {
                     description: emptyDescription
                 )
             } else {
-                Table(rows, selection: $selectedID, sortOrder: $sortOrder) {
-                    TableColumn("App", value: \.name) { (row: AppModel.AppRosterRow) in
-                        HStack(spacing: 6) {
-                            AppIconView(
-                                bundleID: row.bundleID,
-                                executablePath: row.executablePath,
-                                size: 16
-                            )
-                            Text(row.name)
-                                .lineLimit(1)
-                        }
-                    }
-                    TableColumn("Sessions", value: \.sessions) { row in
-                        Text("\(row.sessions)")
-                            .font(.body.monospacedDigit())
-                    }
-                    .width(80)
-                    TableColumn("↓", value: \.downloadBytes) { row in
-                        Text(ByteRateFormatter.byteCount(row.downloadBytes))
-                            .font(.body.monospacedDigit())
-                    }
-                    .width(80)
-                    TableColumn("↑", value: \.uploadBytes) { row in
-                        Text(ByteRateFormatter.byteCount(row.uploadBytes))
-                            .font(.body.monospacedDigit())
-                    }
-                    .width(80)
-                    TableColumn("Rate", value: \.bytesPerSecond) { row in
-                        Text(rateLabel(row.bytesPerSecond))
-                            .font(.body.monospacedDigit())
-                    }
-                    .width(90)
-                }
-                .tableStyle(.inset)
-                .contextMenu(forSelectionType: String.self) { ids in
-                    if let id = ids.first, let row = rows.first(where: { $0.id == id }) {
-                        Button("Open in Inspector") {
+                NativeTable(
+                    rows: rows,
+                    columns: Self.columns,
+                    selection: $selectedID,
+                    sortOrder: $sortOrder,
+                    contextMenu: { row in
+                        var items = [NativeTableMenuItem("Open in Inspector") {
                             appModel.presentInspectorForApp(key: row.id, using: openWindow)
-                        }
+                        }]
                         if let bundleID = row.bundleID {
-                            Button("Copy Bundle ID") { copy(bundleID) }
+                            items.append(NativeTableMenuItem("Copy Bundle ID") { copy(bundleID) })
                         }
+                        return items
+                    },
+                    primaryAction: { row in
+                        appModel.presentInspectorForApp(key: row.id, using: openWindow)
                     }
-                } primaryAction: { ids in
-                    if let id = ids.first {
-                        appModel.presentInspectorForApp(key: id, using: openWindow)
-                    }
-                }
+                )
                 .overlay {
                     if rows.isEmpty {
                         ContentUnavailableView {
@@ -88,6 +58,23 @@ struct AppsPane: View {
         }
     }
 
+    private static let columns: [NativeTableColumn<AppModel.AppRosterRow>] = [
+        .init("app", "App", width: 240, minWidth: 120, flexible: true, icon: { row in
+            AppIcon.resolvedNSImage(bundleID: row.bundleID, executablePath: row.executablePath)
+                ?? NSImage(systemSymbolName: "app.fill", accessibilityDescription: nil)
+        }, sort: .by(\.name)) { $0.name },
+        .init("sessions", "Sessions", width: 80, font: NativeTableFont.digits, sort: .by(\.sessions)) { "\($0.sessions)" },
+        .init("down", "↓", width: 80, font: NativeTableFont.digits, sort: .by(\.downloadBytes)) {
+            ByteRateFormatter.byteCount($0.downloadBytes)
+        },
+        .init("up", "↑", width: 80, font: NativeTableFont.digits, sort: .by(\.uploadBytes)) {
+            ByteRateFormatter.byteCount($0.uploadBytes)
+        },
+        .init("rate", "Rate", width: 90, font: NativeTableFont.digits, sort: .by(\.bytesPerSecond)) {
+            rateLabel($0.bytesPerSecond)
+        },
+    ]
+
     private var displayRows: [AppModel.AppRosterRow] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
         let rows = appModel.appRosterRows.sorted(using: sortOrder)
@@ -105,7 +92,7 @@ struct AppsPane: View {
         return "Process-level traffic appears when TUN captures local apps."
     }
 
-    private func rateLabel(_ bytesPerSecond: Double) -> String {
+    private static func rateLabel(_ bytesPerSecond: Double) -> String {
         bytesPerSecond > 0
             ? ByteRateFormatter.string(fromBytesPerSecond: bytesPerSecond)
             : "—"
@@ -130,43 +117,7 @@ struct LANPane: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             if appModel.allowLANEnabled {
-                Table(rows, selection: $selectedID, sortOrder: $sortOrder) {
-                    TableColumn("Device", value: \.name) { (row: AppModel.LANClientRow) in
-                        HStack(spacing: 6) {
-                            Image(systemName: row.systemImage)
-                                .foregroundStyle(.secondary)
-                                .frame(width: 16, height: 16)
-                            Text(row.name)
-                                .lineLimit(1)
-                        }
-                    }
-                    TableColumn("Type", value: \.kindTitle) { row in
-                        Text(row.kindTitle)
-                            .foregroundStyle(.secondary)
-                    }
-                    .width(90)
-                    TableColumn("Address", value: \.address) { row in
-                        Text(row.address)
-                            .font(.body.monospaced())
-                    }
-                    .width(min: 120, ideal: 160)
-                    TableColumn("Sessions", value: \.sessions) { row in
-                        Text("\(row.sessions)")
-                            .font(.body.monospacedDigit())
-                    }
-                    .width(80)
-                    TableColumn("↓", value: \.downloadBytes) { row in
-                        Text(ByteRateFormatter.byteCount(row.downloadBytes))
-                            .font(.body.monospacedDigit())
-                    }
-                    .width(80)
-                    TableColumn("↑", value: \.uploadBytes) { row in
-                        Text(ByteRateFormatter.byteCount(row.uploadBytes))
-                            .font(.body.monospacedDigit())
-                    }
-                    .width(80)
-                }
-                .tableStyle(.inset)
+                NativeTable(rows: rows, columns: Self.columns, selection: $selectedID, sortOrder: $sortOrder)
                 .overlay {
                     if rows.isEmpty {
                         ContentUnavailableView {
@@ -186,6 +137,21 @@ struct LANPane: View {
         }
         .navigationTitle("LAN")
     }
+
+    private static let columns: [NativeTableColumn<AppModel.LANClientRow>] = [
+        .init("device", "Device", width: 200, minWidth: 120, flexible: true, icon: { row in
+            NSImage(systemSymbolName: row.systemImage, accessibilityDescription: nil)
+        }, sort: .by(\.name)) { $0.name },
+        .init("type", "Type", width: 90, color: { _ in .secondaryLabelColor }, sort: .by(\.kindTitle)) { $0.kindTitle },
+        .init("address", "Address", width: 160, minWidth: 120, font: NativeTableFont.mono, sort: .by(\.address)) { $0.address },
+        .init("sessions", "Sessions", width: 80, font: NativeTableFont.digits, sort: .by(\.sessions)) { "\($0.sessions)" },
+        .init("down", "↓", width: 80, font: NativeTableFont.digits, sort: .by(\.downloadBytes)) {
+            ByteRateFormatter.byteCount($0.downloadBytes)
+        },
+        .init("up", "↑", width: 80, font: NativeTableFont.digits, sort: .by(\.uploadBytes)) {
+            ByteRateFormatter.byteCount($0.uploadBytes)
+        },
+    ]
 
     private var header: some View {
         HStack(alignment: .center, spacing: 16) {
