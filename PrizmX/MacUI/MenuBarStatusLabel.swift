@@ -87,7 +87,7 @@ enum MenuBarSpeedImage {
     private static let valueWidth = ceil(
         ["B/s", "KB/s", "MB/s", "GB/s"]
             .flatMap { unit in ["1000 \(unit)", "99.9 \(unit)"] }
-            .map(width)
+            .map { width($0) }
             .max() ?? 0
     )
 

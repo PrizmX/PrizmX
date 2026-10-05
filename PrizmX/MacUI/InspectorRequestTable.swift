@@ -21,7 +21,7 @@ struct InspectorRequestTable: View {
     private static let columns: [NativeTableColumn<InspectorRequest>] = [
         .init("id", "ID", width: 50, font: NativeTableFont.digits, color: secondary, sort: .by(\.sortSerial)) { $0.idLabel },
         .init("time", "Time", width: 150, font: NativeTableFont.digits, sort: .by(\.timestamp)) { $0.timeLabel },
-        .init("app", "App", width: 160, minWidth: 120, icon: icon(for:), sort: .by(\.appName)) { $0.appName },
+        .init("app", "App", width: 160, minWidth: 120, icon: { icon(for: $0) }, sort: .by(\.appName)) { $0.appName },
         .init("status", "Status", width: 90, sort: .by(\.statusLabel)) { $0.statusLabel },
         .init("policy", "Policy", width: 200, minWidth: 140, sort: .by(\.routeLabel)) { $0.routeLabel },
         .init("rule", "Rule", width: 180, minWidth: 120, color: secondary, sort: .by(\.ruleLabel)) { $0.ruleLabel },

@@ -15,7 +15,6 @@ struct NativeSidebarList: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let outline = SidebarOutlineView()
         outline.style = .sourceList
-        outline.selectionHighlightStyle = .sourceList
         outline.headerView = nil
         outline.allowsEmptySelection = false
         outline.allowsMultipleSelection = false

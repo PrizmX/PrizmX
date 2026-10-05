@@ -11,7 +11,7 @@ enum AppWindowID {
     static let inspector = "prizmx.inspector"
 }
 
-enum AppEvent {
+nonisolated enum AppEvent {
     static let toggleVPN = Notification.Name("app.prizmx.toggleVPN")
     static let presentNodePicker = Notification.Name("app.prizmx.presentNodePicker")
 }
@@ -481,7 +481,7 @@ final class AppModel {
                 tunModeEnabled = false
                 UserDefaults.standard.set(false, forKey: DefaultsKey.tunModeEnabled)
             } else if tunModeEnabled || systemProxyEnabled || allowLANEnabled {
-                Task { await applyTakeover() }
+                takeoverTask = Task { await applyTakeover() }
             }
             persistOutboundMode()
             refreshInboundListen()
@@ -523,7 +523,7 @@ final class AppModel {
         let polling = withObservationTracking {
             dashboard.vpn.isPollingMetrics
         } onChange: { [weak self] in
-            Task { @MainActor in self?.startTrafficIngest() }
+            Task { @MainActor [weak self] in self?.startTrafficIngest() }
         }
         guard polling else {
             guard trafficIngestTask != nil else { return }
@@ -783,6 +783,15 @@ final class AppModel {
         scheduleEgressRefresh()
     }
 
+    /// Returns once no takeover is in flight, following any that supersede
+    /// the one awaited.
+    func waitForTakeover() async {
+        while let task = takeoverTask {
+            await task.value
+            if task == takeoverTask { return }
+        }
+    }
+
     /// Coalesce rapid TUN / System Proxy / Allow LAN flips onto the last state
     /// so apply+restore cannot race and re-prompt.
     private func scheduleTakeover() {
@@ -811,6 +820,33 @@ final class AppModel {
         let config = dashboard.profiles.activeProfile?.rawConfig ?? VPNManager.defaultDirectConfig
         let overlay = dashboard.profiles.overlay
         refreshInboundListen()
+        // Mixed-port first: it runs in this process and comes up in well under
+        // a second, while TUN waits on the system extension and the tunnel.
+        // After an unclean exit (crash, Xcode Stop) the system proxy still
+        // points at its port, so every app is refused until it listens.
+        if systemProxyEnabled || allowLANEnabled {
+            do {
+                // The runtime drops superseded requests and restores the
+                // system proxy itself when an apply fails.
+                try await mixedPortRuntime.apply(
+                    configText: config,
+                    overlay: overlay,
+                    allowLAN: allowLANEnabled,
+                    setSystemProxy: systemProxyEnabled
+                )
+                mixedPortListenError = nil
+            } catch {
+                mixedPortListenError = error.localizedDescription
+                dashboard.vpn.reportHostError(error)
+                TunnelLog.write(.error, "mixed-port failed: \(error.localizedDescription)")
+            }
+        } else {
+            mixedPortRuntime.shutdown()
+            mixedPortListenError = nil
+        }
+        syncMixedPortState()
+        // A newer takeover was scheduled; it owns the TUN state.
+        guard !Task.isCancelled else { return }
         if tunModeEnabled {
             do {
                 try await TunnelSystemExtension.activate()
@@ -833,29 +869,6 @@ final class AppModel {
         } else {
             dashboard.vpn.stopVPN()
         }
-        // A newer takeover was scheduled; it owns the mixed-port state.
-        guard !Task.isCancelled else { return }
-        if systemProxyEnabled || allowLANEnabled {
-            do {
-                // The runtime drops superseded requests and restores the
-                // system proxy itself when an apply fails.
-                try await mixedPortRuntime.apply(
-                    configText: config,
-                    overlay: overlay,
-                    allowLAN: allowLANEnabled,
-                    setSystemProxy: systemProxyEnabled
-                )
-                mixedPortListenError = nil
-            } catch {
-                mixedPortListenError = error.localizedDescription
-                dashboard.vpn.reportHostError(error)
-                TunnelLog.write(.error, "mixed-port failed: \(error.localizedDescription)")
-            }
-        } else {
-            mixedPortRuntime.shutdown()
-            mixedPortListenError = nil
-        }
-        syncMixedPortState()
         scheduleEgressRefresh()
     }
 
@@ -875,7 +888,7 @@ final class AppModel {
         _ = withObservationTracking {
             dashboard.status
         } onChange: { [weak self] in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.refreshSessionClock()
                 self?.trackSessionClock()
             }
@@ -888,7 +901,7 @@ final class AppModel {
         let (tun, systemProxy) = withObservationTracking {
             (dashboard.status == .connected, systemProxyActive)
         } onChange: { [weak self] in
-            Task { @MainActor in self?.trackAnalyticsProxyState() }
+            Task { @MainActor [weak self] in self?.trackAnalyticsProxyState() }
         }
         Analytics.updateProxyState(tun: tun, systemProxy: systemProxy)
     }
@@ -1023,9 +1036,12 @@ extension AppModel {
         }
     }
 
+    /// Local event monitors run on the main thread.
     nonisolated private static var isEditingText: Bool {
-        let responder = NSApp.keyWindow?.firstResponder
-        return responder is NSTextView || responder is NSText
+        MainActor.assumeIsolated {
+            let responder = NSApp.keyWindow?.firstResponder
+            return responder is NSTextView || responder is NSText
+        }
     }
 }
 

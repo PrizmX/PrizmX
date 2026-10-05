@@ -131,7 +131,10 @@ extension AppModel {
     }
 
     /// IP number plus geo (flag). Details first; ipify if that fails.
+    /// Waits out a takeover: mid-switch the lookup measures the old path, and
+    /// at launch the system proxy may still point at a port not yet listening.
     func refreshEgress() async {
+        await waitForTakeover()
         await refreshEgressDetails()
         if egressIP == "—" || egressIP.isEmpty {
             let previous = egressIP

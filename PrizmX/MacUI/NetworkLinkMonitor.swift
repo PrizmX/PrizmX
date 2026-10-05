@@ -7,7 +7,7 @@ import SystemConfiguration
 import CoreWLAN
 #endif
 
-enum NetworkLinkKind: Equatable {
+nonisolated enum NetworkLinkKind: Equatable {
     case offline
     case wifi
     case ethernet
@@ -46,7 +46,7 @@ final class NetworkLinkMonitor: NSObject, CLLocationManagerDelegate {
         super.init()
         location.delegate = self
         monitor.pathUpdateHandler = { [weak self] path in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.apply(path)
             }
         }
