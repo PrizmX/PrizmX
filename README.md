@@ -24,8 +24,9 @@ Outbound protocols (imported from Clash YAML, Surge INI and sing-box):
 | AnyTLS | TLS 1.3 | SNI, `skip-cert-verify`, session pool | yes | no |
 | HTTP / HTTPS | TCP, TLS | Basic auth, headers | yes | no |
 | SOCKS5 | TCP, TLS | username / password | yes | yes |
+| ShadowsocksR | TCP | stream ciphers; `origin`, `auth_sha1_v4`, `auth_aes128_*`, `auth_chain_a`; obfs `plain`, `http_simple`, `http_post`, `tls1.2_ticket_*` | yes | no |
 
-Not imported: Hysteria, TUIC, WireGuard, ShadowsocksR, HTTP/2 (`h2`) transport, `client-fingerprint`, Mux. Details live in [PrizmX-Foundation](https://github.com/PrizmX/PrizmX-Foundation#outbound-protocols).
+Not imported: Hysteria, TUIC, WireGuard, ShadowsocksR UDP, HTTP/2 (`h2`) transport, `client-fingerprint`, Mux. Details live in [PrizmX-Foundation](https://github.com/PrizmX/PrizmX-Foundation#outbound-protocols).
 
 HTTP capture, decrypt, and rewrite are **out of scope** for open-core. Those belong in PrizmX-Premium / PrizmX-Pro.
 
