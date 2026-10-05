@@ -7,11 +7,17 @@ import PrizmXUIEngine
 struct RulesPane: View {
     @Environment(AppModel.self) private var appModel
     @State private var search = ""
-    @State private var selectedRuleID: String?
+    @State private var selectedRuleID: RuleRow.ID?
     @State private var editor: OverlayRule?
+    /// Not observed: a cache read in `body`, refreshed when its inputs change.
+    @State private var rowBuilder = RuleRowBuilder()
 
     var body: some View {
-        let rows = displayRules
+        let rows = rowBuilder.rows(
+            rules: appModel.dashboard.profiles.rules,
+            localIDs: overlay.rules.map(\.id),
+            search: search
+        )
         Group {
             if rows.isEmpty {
                 ConsoleEmptyState(
@@ -23,39 +29,13 @@ struct RulesPane: View {
                         : "No rules match this filter."
                 )
             } else {
-                Table(rows, selection: $selectedRuleID) {
-                    TableColumn("#") { (row: DisplayRule) in
-                        Text("\(row.number)")
-                            .foregroundStyle(.secondary)
+                NativeTable(rows: rows, columns: Self.columns, selection: $selectedRuleID) { row in
+                    var items = [NativeTableMenuItem("Copy") { copyRule(row) }]
+                    if let id = row.overlayID {
+                        items.append(NativeTableMenuItem("Edit…") { editor = overlayRule(id: id) })
+                        items.append(NativeTableMenuItem("Delete") { deleteLocal(id: id) })
                     }
-                    .width(40)
-                    TableColumn("Type") { row in
-                        Text(row.type)
-                    }
-                    .width(140)
-                    TableColumn("Payload") { row in
-                        Text(row.payload)
-                            .font(.body.monospaced())
-                    }
-                    TableColumn("Policy") { row in
-                        Text(row.policy)
-                    }
-                    .width(120)
-                    TableColumn("Source") { row in
-                        Text(row.isLocal ? "Local" : "Profile")
-                            .foregroundStyle(row.isLocal ? .primary : .secondary)
-                    }
-                    .width(80)
-                }
-                .tableStyle(.inset)
-                .contextMenu(forSelectionType: String.self) { ids in
-                    if let id = ids.first, let row = rows.first(where: { $0.id == id }) {
-                        Button("Copy") { copyRule(row) }
-                        if row.isLocal {
-                            Button("Edit…") { editor = overlayRule(id: row.overlayID) }
-                            Button("Delete", role: .destructive) { deleteLocal(id: row.overlayID) }
-                        }
-                    }
+                    return items
                 }
             }
         }
@@ -90,10 +70,20 @@ struct RulesPane: View {
         }
     }
 
+    private static let columns: [NativeTableColumn<RuleRow>] = [
+        .init("number", "#", width: 40, color: { _ in .secondaryLabelColor }) { "\($0.number)" },
+        .init("type", "Type", width: 140) { $0.type },
+        .init("payload", "Payload", width: 320, minWidth: 120, flexible: true, font: NativeTableFont.mono) { $0.payload },
+        .init("policy", "Policy", width: 120) { $0.policy },
+        .init("source", "Source", width: 80, color: { $0.isLocal ? .labelColor : .secondaryLabelColor }) {
+            $0.isLocal ? "Local" : "Profile"
+        },
+    ]
+
     private var overlay: ProfileOverlay { appModel.dashboard.profiles.overlay }
 
     private var selectedLocalID: UUID? {
-        displayRules.first { $0.id == selectedRuleID }?.overlayID
+        if case .local(let id) = selectedRuleID { id } else { nil }
     }
 
     private var policyNames: [String] {
@@ -101,29 +91,6 @@ struct RulesPane: View {
         names.append(contentsOf: appModel.nodeList.policyGroupSections.map(\.id))
         var seen = Set<String>()
         return names.filter { seen.insert($0).inserted }
-    }
-
-    private var displayRules: [DisplayRule] {
-        let localIDs = overlay.rules.map(\.id)
-        let rules = appModel.dashboard.profiles.rules.enumerated().map { index, rule in
-            let isLocal = index < localIDs.count
-            return DisplayRule(
-                id: isLocal ? localIDs[index].uuidString : "profile-\(index)",
-                number: index + 1,
-                type: rule.displayType,
-                payload: rule.displayPayload,
-                policy: rule.displayPolicy,
-                isLocal: isLocal,
-                overlayID: isLocal ? localIDs[index] : nil
-            )
-        }
-        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return rules }
-        return rules.filter { row in
-            row.type.localizedCaseInsensitiveContains(query)
-                || row.payload.localizedCaseInsensitiveContains(query)
-                || row.policy.localizedCaseInsensitiveContains(query)
-        }
     }
 
     private func overlayRule(id: UUID?) -> OverlayRule? {
@@ -153,23 +120,13 @@ struct RulesPane: View {
         selectedRuleID = nil
     }
 
-    private func copyRule(_ row: DisplayRule) {
+    private func copyRule(_ row: RuleRow) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(
             "\(row.type),\(row.payload),\(row.policy)",
             forType: .string
         )
     }
-}
-
-private struct DisplayRule: Identifiable {
-    var id: String
-    var number: Int
-    var type: String
-    var payload: String
-    var policy: String
-    var isLocal: Bool
-    var overlayID: UUID?
 }
 
 struct ComingSoonPane: View {
