@@ -200,6 +200,19 @@ struct SettingsPane: View {
                 }
             }
 
+            Section("DNS") {
+                Toggle(isOn: $appModel.overrideDNSEnabled) {
+                    Text("Override DNS")
+                    Text("Also resolve proxy servers with public and system DNS, and prefer addresses that worked before, instead of the profile's DNS alone. Leave off unless your provider asks for it.")
+                }
+                LabeledContent {
+                    Button("Clear") { appModel.clearDNSCache() }
+                } label: {
+                    Text("DNS Cache")
+                    Text("Forget cached DNS answers and reconnect. Refreshing the active subscription does this too.")
+                }
+            }
+
             Section("Appearance") {
                 Picker("Connected Icon", selection: $appModel.menuBarConnectedStyle) {
                     ForEach(MenuBarConnectedStyle.allCases) { style in

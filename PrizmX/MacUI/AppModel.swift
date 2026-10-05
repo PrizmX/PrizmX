@@ -213,6 +213,24 @@ final class AppModel {
             TunnelLog.minimumLevel = eventsLogLevel
         }
     }
+
+    /// Settings switch: proxy server hostnames also use public / system DNS
+    /// and proven addresses, not the profile's DNS alone. `DNSPreferenceStore`
+    /// owns the stored value so the Packet Tunnel and mixed-port engines read
+    /// the same one.
+    var overrideDNSEnabled = false {
+        didSet {
+            guard overrideDNSEnabled != oldValue else { return }
+            do {
+                try DNSPreferenceStore.save(.init(overrideDNS: overrideDNSEnabled))
+            } catch {
+                TunnelLog.write(.error, "DNS preference save failed: \(error.localizedDescription)")
+                dashboard.profiles.recordError(error)
+                return
+            }
+            scheduleReload(reason: "override DNS \(overrideDNSEnabled ? "on" : "off")")
+        }
+    }
     var selectedSidebarItem: SidebarItem = .home
     var sessionStartedAt: Date?
     var inspectorScope: InspectorScope = .recent {
@@ -362,6 +380,10 @@ final class AppModel {
     nonisolated(unsafe) var egressRefreshTask: Task<Void, Never>?
     @ObservationIgnored
     nonisolated(unsafe) private var terminateObserver: NSObjectProtocol?
+    /// Set by `clearDNSCache` / a subscription refresh; the next takeover
+    /// clears the node DNS cache once the engines are down.
+    @ObservationIgnored
+    private var dnsCacheClearPending = false
 
     init(preview: Bool = false) {
         if preview {
@@ -420,6 +442,7 @@ final class AppModel {
             analyticsEnabled = Analytics.isEnabled
             outboundMode = OutboundMode(rawValue: UserDefaults.standard.string(forKey: DefaultsKey.outboundMode) ?? "") ?? .rule
             eventsLogLevel = TunnelLog.minimumLevel
+            overrideDNSEnabled = DNSPreferenceStore.load().overrideDNS
             if dashboard.status == .connected {
                 sessionStartedAt = Date()
             }
@@ -668,7 +691,18 @@ final class AppModel {
     /// takeover flips so rapid switching cannot race stop/start.
     func didChangeActiveProfile() {
         persistOutboundMode()
-        TunnelLog.write(.info, "active profile changed, reloading live egress")
+        scheduleReload(reason: "active profile changed")
+    }
+
+    /// Forgets cached DNS answers and restarts a live engine so node
+    /// hostnames are resolved again.
+    func clearDNSCache() {
+        dnsCacheClearPending = true
+        scheduleReload(reason: "DNS cache clear requested")
+    }
+
+    private func scheduleReload(reason: String) {
+        TunnelLog.write(.info, "\(reason), reloading live egress")
         takeoverTask?.cancel()
         takeoverTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(150))
@@ -715,11 +749,18 @@ final class AppModel {
         }
         guard dashboard.profiles.activeProfileID == id else { return }
         refreshInboundListen()
+        // The provider may have moved its nodes: drop addresses learned
+        // for the old ones.
+        dnsCacheClearPending = true
         didChangeActiveProfile()
     }
 
     private func reloadLiveEgress() async {
-        guard tunModeEnabled || systemProxyEnabled || allowLANEnabled else { return }
+        guard tunModeEnabled || systemProxyEnabled || allowLANEnabled else {
+            // Nothing runs, so nothing can write the cache back.
+            clearPendingDNSCache()
+            return
+        }
         mixedPortRuntime.invalidate()
         if isVPNOn {
             dashboard.vpn.stopVPN()
@@ -728,6 +769,12 @@ final class AppModel {
         // Superseded by a newer takeover, which applies the latest state.
         guard !Task.isCancelled else { return }
         await applyTakeover()
+    }
+
+    private func clearPendingDNSCache() {
+        guard dnsCacheClearPending else { return }
+        dnsCacheClearPending = false
+        NodeAddressStore.clearCache()
     }
 
     func toggleConnection() async {
@@ -750,6 +797,17 @@ final class AppModel {
     /// TUN → Packet Tunnel (FakeIP). System Proxy / Allow LAN → mixed-port
     /// in this process. Allow LAN can listen without setting system proxy.
     func applyTakeover() async {
+        if dnsCacheClearPending {
+            // Engines go down first: a live extension writes back the
+            // addresses it holds. A superseding takeover keeps the request.
+            mixedPortRuntime.invalidate()
+            if isVPNOn {
+                dashboard.vpn.stopVPN()
+                try? await Task.sleep(for: .milliseconds(400))
+                guard !Task.isCancelled else { return }
+            }
+            clearPendingDNSCache()
+        }
         let config = dashboard.profiles.activeProfile?.rawConfig ?? VPNManager.defaultDirectConfig
         let overlay = dashboard.profiles.overlay
         refreshInboundListen()
