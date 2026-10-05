@@ -49,19 +49,20 @@ private struct MenuBarIconSpec {
     var assetName: String
     var renderingMode: Image.TemplateRenderingMode
 
+    /// States differ by shape as well as tone, so they stay apart on light,
+    /// dark and wallpaper-tinted bars and in black and white: off is a dimmed
+    /// outline, system proxy a full outline, TUN a filled core.
     init(state: MenuBarSessionState, connectedStyle: MenuBarConnectedStyle) {
         switch state {
         case .idle:
             assetName = "MenuBarPrismIdle"
-            renderingMode = .original
+            renderingMode = .template
         case .systemProxy:
-            // Template so it stays distinct from idle gray and TUN purple
-            // without a fourth catalog image.
             assetName = "MenuBarPrism"
             renderingMode = .template
         case .tun:
             if connectedStyle == .monochrome {
-                assetName = "MenuBarPrism"
+                assetName = "MenuBarPrismTun"
                 renderingMode = .template
             } else {
                 assetName = "MenuBarPrismOn"

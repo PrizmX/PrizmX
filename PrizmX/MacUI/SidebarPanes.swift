@@ -176,7 +176,7 @@ struct SettingsPane: View {
                         Text(style.title).tag(style)
                     }
                 }
-                .help("Idle stays gray. System Proxy uses the template prism. This only changes the TUN icon.")
+                .help("Off is a dimmed outline and System Proxy a full outline. TUN fills the core; this only changes its color.")
 
                 Toggle(isOn: $appModel.menuBarSpeedEnabled) {
                     Text("Show Network Speed")
