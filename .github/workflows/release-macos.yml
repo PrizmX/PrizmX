@@ -30,8 +30,11 @@ concurrency:
 
 jobs:
   build-and-release:
-    runs-on: macos-latest
+    # Pin the image and Xcode: a `macos-latest` / default-Xcode bump silently
+    # changes how release builds compile.
+    runs-on: macos-26
     env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
       APP_NAME: PrizmX
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
