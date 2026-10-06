@@ -60,18 +60,24 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: PrizmX/PrizmX-Foundation
+          # The commit the original v0.0.8 release built against.
+          ref: 0a3dd5e430bbf4412ed26dbb505f1b10d1da95b0
           path: PrizmX-Foundation
 
       - name: Checkout PrizmX-Kit
         uses: actions/checkout@v4
         with:
           repository: PrizmX/PrizmX-Kit
+          # The commit the original v0.0.8 release built against.
+          ref: 50f533a48a383e815a1e1b6ec62c8c6f77f99bf7
           path: PrizmX-Kit
 
       - name: Checkout SwiftTCP
         uses: actions/checkout@v4
         with:
           repository: PrizmX/SwiftTCP
+          # The commit the original v0.0.8 release built against.
+          ref: 0ad528b40ed220a9d31198dd38ac4184cdb35cf8
           path: SwiftTCP
 
       - name: Resolve version from tag
