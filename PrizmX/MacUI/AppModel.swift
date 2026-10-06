@@ -882,6 +882,7 @@ extension AppModel {
         // The macOS 27 SDK dropped the Visible notifications; occlusion
         // state flips whenever a window is ordered in or out.
         let names: [Notification.Name] = [
+            NSApplication.didFinishLaunchingNotification,
             NSWindow.didChangeOcclusionStateNotification,
             NSWindow.willCloseNotification,
             NSWindow.didMiniaturizeNotification,
@@ -904,7 +905,10 @@ extension AppModel {
     }
 
     private func updateUIVisibility() {
-        let windowVisible = NSApp.windows.contains {
+        // `NSApp` is still nil while SwiftUI runs `App.init`, which builds
+        // this model; launch completion re-runs the check.
+        let windows = NSApp?.windows ?? []
+        let windowVisible = windows.contains {
             $0.isVisible && $0.occlusionState.contains(.visible) && $0.styleMask.contains(.titled)
         }
         if windowVisible != anyWindowVisible {
