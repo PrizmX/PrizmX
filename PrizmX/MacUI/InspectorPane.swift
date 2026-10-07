@@ -190,6 +190,9 @@ struct InspectorPane: View {
             }
         }
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        // Rows are rebuilt only while this is on screen.
+        .onAppear { appModel.isInspectorPresented = true }
+        .onDisappear { appModel.isInspectorPresented = false }
     }
 
     private var sidebarToggleButton: some View {

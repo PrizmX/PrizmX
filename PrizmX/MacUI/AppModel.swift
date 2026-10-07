@@ -263,8 +263,15 @@ final class AppModel {
     }
     @ObservationIgnored
     private var inspectorHistory = FlowHistory()
+    /// The Inspector window is open. Its rows are rebuilt only then; the
+    /// history above keeps accumulating either way.
+    var isInspectorPresented = false {
+        didSet {
+            if isInspectorPresented, !oldValue { refreshInspectorRows() }
+        }
+    }
     /// Inspector table and sidebar, rebuilt by `refreshInspectorRows()` when
-    /// an input changes (views only read them).
+    /// an input changes while `isInspectorPresented` (views only read them).
     private(set) var inspectorRows: [InspectorRequest] = []
     private(set) var inspectorGroupRows: [InspectorGroupRow] = []
     private(set) var inspectorAllCount = 0
@@ -360,9 +367,6 @@ final class AppModel {
     /// A root popup menu (in practice the menu-bar dropdown) is on screen.
     /// Gates the dropdown's live chart and speed-history publishing.
     private(set) var menuOpen = false
-    /// When the dropdown last opened. Changes once per open, never per
-    /// second: SwiftUI re-applies every menu item whenever the content changes.
-    private(set) var menuOpenedAt = Date.now
     /// True while any titled app window is on screen and not occluded.
     /// Gates live-chart publishing and wall-clock TimelineViews.
     private(set) var anyWindowVisible = false
@@ -611,6 +615,8 @@ final class AppModel {
     /// filter, group and sort. Unchanged outputs are not re-published, so an
     /// idle history does not redraw the table.
     private func refreshInspectorRows() {
+        // Opening the Inspector rebuilds from the latest inputs.
+        guard isInspectorPresented else { return }
         let output = inspectorRowBuilder.build(
             InspectorRowBuilder.Input(
                 flows: inspectorFlows,
@@ -713,7 +719,6 @@ final class AppModel {
 
     /// Reported by `MenuBarDropdownHooks` from menu tracking.
     func menuDidOpen() {
-        menuOpenedAt = .now
         if !menuOpen {
             menuOpen = true
             updateUIVisibility()
@@ -934,6 +939,8 @@ final class AppModel {
 extension AppModel {
     /// Focuses the standalone Inspector window, bringing the app forward.
     func presentInspector(using openWindow: OpenWindowAction) {
+        // Before the window opens, so its first frame already has rows.
+        isInspectorPresented = true
         openWindow(id: AppWindowID.inspector)
         NSApp.activate(ignoringOtherApps: true)
         DockPolicy.apply(menuBarOnly: menuBarOnly)

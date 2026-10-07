@@ -26,9 +26,10 @@ struct MenuBarMenu: View {
 
         Divider()
 
-        // Uptime as of opening; the hooks advance it in place every second.
+        // Not a dependency on time: the hooks set the uptime in place when the
+        // menu opens and every second while it is open.
         Toggle(Self.tunTitle, isOn: $appModel.tunModeEnabled)
-            .badge(Self.tunBadge(appModel, now: appModel.menuOpenedAt).map { Text(verbatim: $0) })
+            .badge(Self.tunBadge(appModel, now: .now).map { Text(verbatim: $0) })
         Toggle("System Proxy", isOn: $appModel.systemProxyEnabled)
 
         Picker("Outbound Mode", selection: $appModel.outboundMode) {
@@ -40,7 +41,9 @@ struct MenuBarMenu: View {
         Divider()
 
         profileMenu
-        policyMenu
+        // Slot for the AppKit Node submenu (`MenuBarNodeMenu`): a SwiftUI
+        // item per policy member costs ~30 KB, and profiles list thousands.
+        Button(MenuBarNodeMenu.placeholderTitle) {}
 
         Divider()
 
@@ -57,7 +60,7 @@ struct MenuBarMenu: View {
             .keyboardShortcut("q", modifiers: .command)
     }
 
-    // MARK: - Profile / Policy
+    // MARK: - Profile
 
     private var profileMenu: some View {
         let store = appModel.dashboard.profiles
@@ -74,31 +77,6 @@ struct MenuBarMenu: View {
             Button("Manage Profiles…") {
                 appModel.presentMain(using: openWindow, selecting: .profiles)
             }
-        }
-    }
-
-    /// One submenu per `select` group, like the Policies pane.
-    private var policyMenu: some View {
-        let nodeList = appModel.nodeList
-        return Menu("Node: \(appModel.dashboard.activeNodeName)") {
-            ForEach(nodeList.policyGroupSections) { group in
-                Menu(group.title) {
-                    ForEach(group.members) { member in
-                        Toggle(member.name, isOn: Binding(
-                            get: { nodeList.selectedMemberID(inGroup: group.id) == member.id },
-                            set: { isOn in
-                                if isOn { appModel.selectPolicyMember(member.id, inGroup: group.id) }
-                            }
-                        ))
-                        .disabled(member.isUnsupported)
-                    }
-                }
-            }
-            if !nodeList.policyGroupSections.isEmpty {
-                Divider()
-            }
-            Button("Select Node…") { appModel.presentNodePicker(using: openWindow) }
-                .keyboardShortcut("k", modifiers: .command)
         }
     }
 
@@ -149,6 +127,129 @@ enum MenuBarTrafficItem {
     }
 }
 
+/// The Node submenu, one submenu per `select` group like the Policies pane.
+/// Built in AppKit when it opens and a group's members only when that group
+/// opens, so nothing per node stays resident. SwiftUI owns only the slot
+/// item; its title and submenu are put back whenever a SwiftUI pass resets
+/// them.
+final class MenuBarNodeMenu: NSObject, NSMenuDelegate {
+    static let placeholderTitle = "Node"
+
+    private final class GroupMenu: NSMenu {
+        var groupID = ""
+    }
+
+    private struct Choice {
+        var groupID: String
+        var memberID: String
+    }
+
+    private weak var appModel: AppModel?
+    private weak var slot: NSMenuItem?
+    private let menu = NSMenu()
+    /// Snapshot taken when the submenu opens; group submenus read it.
+    private var sections: [PolicyGroupSection] = []
+
+    init(appModel: AppModel) {
+        self.appModel = appModel
+        super.init()
+        menu.autoenablesItems = false
+        menu.delegate = self
+    }
+
+    /// True when `menu` holds the slot at `index`, which now hosts the submenu.
+    func attach(to menu: NSMenu, at index: Int) -> Bool {
+        guard menu.items.indices.contains(index),
+              menu.items[index].title == Self.placeholderTitle
+        else { return false }
+        slot = menu.items[index]
+        refreshSlot()
+        return true
+    }
+
+    /// Re-applies the slot after any change to its item.
+    func itemChanged(in menu: NSMenu, at index: Int) {
+        guard let slot, menu.items.indices.contains(index), menu.items[index] === slot else { return }
+        refreshSlot()
+    }
+
+    /// Writes only what differs, so the change notification it posts is a no-op.
+    func refreshSlot() {
+        guard let slot, let appModel else { return }
+        let title = "Node: \(appModel.dashboard.activeNodeName)"
+        if slot.title != title {
+            slot.title = title
+        }
+        if slot.submenu !== menu {
+            slot.submenu = menu
+        }
+    }
+
+    // MARK: NSMenuDelegate
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        if let group = menu as? GroupMenu {
+            fillMembers(of: group)
+        } else if menu === self.menu {
+            fillGroups()
+        }
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        guard menu === self.menu else { return }
+        sections = []
+    }
+
+    private func fillGroups() {
+        menu.removeAllItems()
+        sections = appModel?.nodeList.policyGroupSections ?? []
+        for section in sections {
+            let item = NSMenuItem(title: section.title, action: nil, keyEquivalent: "")
+            let submenu = GroupMenu(title: section.title)
+            submenu.groupID = section.id
+            submenu.autoenablesItems = false
+            submenu.delegate = self
+            item.submenu = submenu
+            menu.addItem(item)
+        }
+        if !sections.isEmpty {
+            menu.addItem(.separator())
+        }
+        let picker = NSMenuItem(title: "Select Node…", action: #selector(selectNode), keyEquivalent: "k")
+        picker.keyEquivalentModifierMask = .command
+        picker.target = self
+        menu.addItem(picker)
+    }
+
+    private func fillMembers(of group: GroupMenu) {
+        group.removeAllItems()
+        guard let appModel,
+              let section = sections.first(where: { $0.id == group.groupID })
+        else { return }
+        let selected = appModel.nodeList.selectedMemberID(inGroup: section.id)
+        for member in section.members {
+            let item = NSMenuItem(title: member.name, action: #selector(selectMember(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = Choice(groupID: section.id, memberID: member.id)
+            item.state = member.id == selected ? .on : .off
+            item.isEnabled = !member.isUnsupported
+            group.addItem(item)
+        }
+    }
+
+    @objc private func selectMember(_ sender: NSMenuItem) {
+        guard let choice = sender.representedObject as? Choice,
+              let appModel,
+              appModel.nodeList.selectedMemberID(inGroup: choice.groupID) != choice.memberID
+        else { return }
+        appModel.selectPolicyMember(choice.memberID, inGroup: choice.groupID)
+    }
+
+    @objc private func selectNode() {
+        NotificationCenter.default.post(name: AppEvent.presentNodePicker, object: nil)
+    }
+}
+
 /// Live rates over the waveform. The hosting view outlives the open menu, so
 /// the per-second rates are read only while the menu is on screen.
 private struct MenuBarTrafficChart: View {
@@ -183,19 +284,21 @@ private struct MenuBarTrafficChart: View {
     }
 }
 
-/// AppKit side of the dropdown: attaches the chart and ticks the TUN uptime
-/// badge in place. Observers run synchronously on the posting (main) thread,
-/// so the chart is attached before the menu first draws; SwiftUI only inserts
-/// the items after tracking has begun.
+/// AppKit side of the dropdown: attaches the chart and the Node submenu, and
+/// ticks the TUN uptime badge in place. Observers run synchronously on the
+/// posting (main) thread, so both are attached before the menu first draws;
+/// SwiftUI only inserts the items after tracking has begun.
 final class MenuBarDropdownHooks {
     private weak var appModel: AppModel?
     /// Known once the chart placeholder shows up in it.
     private weak var dropdown: NSMenu?
+    private let nodeMenu: MenuBarNodeMenu
     nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
     nonisolated(unsafe) private var badgeTimer: Timer?
 
     init(appModel: AppModel) {
         self.appModel = appModel
+        nodeMenu = MenuBarNodeMenu(appModel: appModel)
         let center = NotificationCenter.default
         observers = [
             center.addObserver(forName: NSMenu.didAddItemNotification, object: nil, queue: nil) { [weak self] note in
@@ -204,6 +307,15 @@ final class MenuBarDropdownHooks {
                 MainActor.assumeIsolated {
                     guard let self, let menu, let index else { return }
                     self.itemAdded(to: menu, at: index)
+                }
+            },
+            // SwiftUI re-applies every item when the menu content changes.
+            center.addObserver(forName: NSMenu.didChangeItemNotification, object: nil, queue: nil) { [weak self] note in
+                let menu = note.object as? NSMenu
+                let index = note.userInfo?["NSMenuItemIndex"] as? Int
+                MainActor.assumeIsolated {
+                    guard let self, let menu, let index else { return }
+                    self.nodeMenu.itemChanged(in: menu, at: index)
                 }
             },
             center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { [weak self] note in
@@ -229,12 +341,17 @@ final class MenuBarDropdownHooks {
     }
 
     private func itemAdded(to menu: NSMenu, at index: Int) {
+        // The chart placeholder comes first and identifies the dropdown; other
+        // menus (a "Node" table column's header menu) may reuse the title.
+        if menu === dropdown, nodeMenu.attach(to: menu, at: index) { return }
         guard let appModel, MenuBarTrafficItem.attach(to: menu, at: index, appModel: appModel) else { return }
         dropdown = menu
     }
 
     private func menuOpened() {
         appModel?.menuDidOpen()
+        nodeMenu.refreshSlot()
+        tickTunBadge()
         guard badgeTimer == nil else { return }
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tickTunBadge() }
