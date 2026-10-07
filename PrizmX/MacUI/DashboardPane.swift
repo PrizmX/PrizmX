@@ -18,6 +18,25 @@ struct HomePane: View {
     @AppStorage("homeTrafficRankScope") private var rankScopeRaw = TrafficRankScope.app.rawValue
     @AppStorage("homeDidShowReorderTip") private var didShowReorderTip = false
     @State private var showsEgressInfo = false
+    @State private var heldInputs = HeldInputs()
+
+    /// Last values of the widgets fed every second. While no window can show
+    /// Home they are served from here without reading the model, so a hidden
+    /// board stops re-rendering each second; becoming visible reads them anew.
+    private final class HeldInputs {
+        private var values: [String: Any] = [:]
+
+        func value<T>(_ key: String, live: Bool, _ read: () -> T) -> T {
+            if !live, let held = values[key] as? T { return held }
+            let fresh = read()
+            values[key] = fresh
+            return fresh
+        }
+    }
+
+    private func held<T>(_ key: String, _ read: () -> T) -> T {
+        heldInputs.value(key, live: appModel.anyWindowVisible, read)
+    }
 
     var body: some View {
         let placed = layout.packed()
@@ -342,15 +361,21 @@ struct HomePane: View {
     }
 
     private var connectionsWidget: some View {
-        let metrics = appModel.dashboard.vpn.lastMetrics
-        let flows = metrics.activeFlows
-        let processes = Set(flows.compactMap { $0.attribution?.accountingKey })
-        let hosts = Set(flows.map(\.endpoint.host.description))
+        let counts = held("connections") {
+            let metrics = appModel.dashboard.vpn.lastMetrics
+            let flows = metrics.activeFlows
+            return (
+                tcp: metrics.tcpConnections,
+                udp: metrics.udpConnections,
+                processes: Set(flows.compactMap { $0.attribution?.accountingKey }).count,
+                hosts: Set(flows.map(\.endpoint.host.description)).count
+            )
+        }
         return ConnectionsCard(
-            tcpCount: metrics.tcpConnections,
-            udpCount: metrics.udpConnections,
-            processesText: "\(processes.count)",
-            hostsText: "\(hosts.count)"
+            tcpCount: counts.tcp,
+            udpCount: counts.udp,
+            processesText: "\(counts.processes)",
+            hostsText: "\(counts.hosts)"
         )
     }
 
@@ -362,7 +387,7 @@ struct HomePane: View {
             address: appModel.lanCardAddress,
             httpPort: Int(listen.systemProxyHTTPPort),
             socksPort: Int(listen.systemProxySOCKSPort),
-            deviceCount: appModel.lanClientRows.count
+            deviceCount: held("lanDevices") { appModel.lanClientRows.count }
         )
     }
 
@@ -370,7 +395,7 @@ struct HomePane: View {
 
     private var trafficWidget: some View {
         let period = TrafficPeriod(rawValue: trafficPeriodRaw) ?? .day
-        let totals = appModel.trafficLedger.totals(for: period)
+        let totals = held("traffic.\(period.rawValue)") { appModel.trafficLedger.totals(for: period) }
         return TrafficCard(totals: totals) {
             AppSegmentedControl(
                 options: TrafficPeriod.allCases.map { ($0.rawValue, $0.title) },
@@ -382,9 +407,12 @@ struct HomePane: View {
 
     private var rankingWidget: some View {
         let scope = TrafficRankScope(rawValue: rankScopeRaw) ?? .app
+        let ranking = held("ranking.\(scope.rawValue)") {
+            (rows: appModel.trafficLedger.rows(for: scope), hourly: appModel.trafficLedger.hourly())
+        }
         return RankingCard(
-            rows: appModel.trafficLedger.rows(for: scope),
-            hourly: appModel.trafficLedger.hourly(),
+            rows: ranking.rows,
+            hourly: ranking.hourly,
             emptyText: scope.emptyDescription,
             iconImage: { row in
                 AppIcon.image(bundleID: row.bundleID, executablePath: nil)
