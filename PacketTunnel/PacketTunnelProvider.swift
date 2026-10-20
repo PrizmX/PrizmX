@@ -239,8 +239,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         pumpTask = Task { [weak self] in
             await self?.runPacketPump()
         }
+        let ipv6 = !captureIPv6
+            ? "IPv4; no IPv6 on this network"
+            : (engine.allowsIPv6 ? "IPv4 + IPv6" : "IPv4; IPv6 refused by ipv6: false")
         let route = captureAll
-            ? "all via \(virtualInterface?.name ?? "?") (\(captureIPv6 ? "IPv4 + IPv6" : "IPv4; no IPv6 on this network"))"
+            ? "all via \(virtualInterface?.name ?? "?") (\(ipv6))"
             : (useFakeIP ? "198.18.0.0/16" : "none")
         TunnelLog.write(.info, "tunnel started fakeIP=\(useFakeIP) route=\(route)")
         log.info("tunnel started fakeIP=\(useFakeIP, privacy: .public) (SwiftTCP)")
@@ -374,12 +377,16 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         guard swapped else { return .failure("the tunnel changed during the reload") }
         currentEngine.set(next)
-        await stack.updateResolution(fakeIPFilter: next.dns.settings.fakeIPFilter, dns: next.dns)
+        await stack.updateResolution(
+            fakeIPFilter: next.dns.settings.fakeIPFilter,
+            dns: next.dns,
+            carriesIPv6: next.allowsIPv6
+        )
         oldEngine.stopURLTest()
         next.startURLTest()
         TunnelLog.write(
             .info,
-            "engine reloaded rules=\(next.router.rules.count) nodes=\(next.nodeManager.nodesByID.count) groups=\(next.nodeManager.groupsByName.count)"
+            "engine reloaded rules=\(next.router.rules.count) nodes=\(next.nodeManager.nodesByID.count) groups=\(next.nodeManager.groupsByName.count) ipv6=\(next.allowsIPv6 ? "carried" : "refused (ipv6: false)")"
         )
         return .success()
     }
@@ -630,6 +637,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             dns: engine.dns,
             dnsPolicy: { host in await current.engine?.dnsPolicy(host: host) },
             ipv6: engine.dns.settings.ipv6,
+            // Clash `ipv6`: relay the IPv6 routed here, or refuse it.
+            carriesIPv6: engine.allowsIPv6,
             onOutput: { packets in
                 guard !packets.isEmpty else { return }
                 let protocols = packets.map { packet -> NSNumber in
@@ -724,10 +733,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 )
             ]
             if captureIPv6 {
-                // IPv6 too, or it would leave around the tunnel. Without
-                // `dns.ipv6` the stack refuses it (TCP gets a RST) and apps
-                // use IPv4. The FakeIPv6 /64 stays included: it sits inside
-                // the excluded unique-local fc00::/7.
+                // IPv6 too, or it would leave around the tunnel. The stack
+                // relays it like IPv4, or refuses it (TCP gets a RST, apps
+                // use IPv4) when the profile sets `ipv6: false`. The FakeIPv6
+                // /64 stays included: it sits inside the excluded
+                // unique-local fc00::/7.
                 ipv6Settings.includedRoutes?.append(NEIPv6Route.default())
                 ipv6Settings.excludedRoutes = Self.localIPv6Routes
             }
