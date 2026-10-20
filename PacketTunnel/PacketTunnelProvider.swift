@@ -29,6 +29,17 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         var metricsTask: Task<Void, Never>?
         var lastPathFingerprint: String?
         var useFakeIP = true
+        /// "Route All Traffic" as configured, which a reload compares against.
+        var captureAllConfigured = false
+        /// Whether the default route goes into the tunnel now: off when the
+        /// tunnel interface is unknown or the loop breaker tripped.
+        var captureAll = false
+        /// The IPv6 default route too: only while the physical network has
+        /// IPv6 (on an IPv4-only one there is nothing to leak around us).
+        var captureIPv6 = false
+        /// Loop breaker window: when it began and `TunnelEgress.loopCount` then.
+        var loopWindowStart = ContinuousClock.now
+        var loopWindowBase = 0
         var systemDNS: [String] = []
         var ipv6FakeIP = false
         /// The app's mixed-port listeners and the table reader that finds
@@ -69,6 +80,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         get { shared.withLockUnchecked { $0.useFakeIP } }
         set { shared.withLockUnchecked { $0.useFakeIP = newValue } }
     }
+    private var captureAll: Bool {
+        get { shared.withLockUnchecked { $0.captureAll } }
+        set { shared.withLockUnchecked { $0.captureAll = newValue } }
+    }
     private var systemDNS: [String] {
         get { shared.withLockUnchecked { $0.systemDNS } }
         set { shared.withLockUnchecked { $0.systemDNS = newValue } }
@@ -101,6 +116,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 self.startPathMonitor()
                 completionHandler(nil)
             } catch {
+                TunnelEgress.avoid(nil)
                 TunnelLog.write(.error, "startTunnel failed: \(error.localizedDescription)")
                 self.log.error("startTunnel failed: \(error.localizedDescription, privacy: .public)")
                 completionHandler(error)
@@ -130,6 +146,27 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         let systemDNS = boot.systemDNS
         self.useFakeIP = useFakeIP
         self.systemDNS = systemDNS
+        // Our own dials must never take the default route into the tunnel.
+        // Without the tunnel's interface there is no way to keep them off,
+        // so the experiment stays off.
+        var captureAll = boot.captureAllTraffic
+        if captureAll {
+            if let tunnel = virtualInterface {
+                TunnelEgress.avoid(tunnel)
+            } else {
+                captureAll = false
+                TunnelLog.write(.error, "route all traffic skipped: the tunnel interface is unknown")
+            }
+        }
+        let captureIPv6 = captureAll && Self.physicalNetworkHasIPv6()
+        shared.withLockUnchecked { state in
+            state.captureAllConfigured = boot.captureAllTraffic
+            state.captureAll = captureAll
+            state.captureIPv6 = captureIPv6
+            // `avoid` above restarted `TunnelEgress.loopCount` at zero.
+            state.loopWindowStart = .now
+            state.loopWindowBase = 0
+        }
         let pinPreview = boot.pinnedNodeAddresses.map { "\($0.key)→\($0.value.map(\.description))" }.sorted().joined(separator: ",")
         let configBytes = boot.configText?.utf8.count ?? 0
         let kitRoot = TunnelLog.kitRoot?.path ?? "-"
@@ -174,10 +211,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
         // 3. Virtual NIC: FakeIP 198.18.0.0/16 only. DIRECT FakeIP flows
         // splice to real IPs in userspace (those IPs are not in this CIDR).
+        // "Route All Traffic" takes the default route as well.
         let settings = Self.makeNetworkSettings(
             useFakeIP: useFakeIP,
             dnsServers: systemDNS,
-            ipv6: engine.dns.settings.ipv6
+            ipv6: engine.dns.settings.ipv6,
+            captureAll: captureAll,
+            captureIPv6: captureIPv6
         )
         do {
             try await setTunnelNetworkSettings(settings)
@@ -191,6 +231,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             self.stack = nil
             self.engine = nil
             currentEngine.set(nil)
+            TunnelEgress.avoid(nil)
             throw error
         }
 
@@ -198,7 +239,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         pumpTask = Task { [weak self] in
             await self?.runPacketPump()
         }
-        TunnelLog.write(.info, "tunnel started fakeIP=\(useFakeIP) route=\(useFakeIP ? "198.18.0.0/16" : "default")")
+        let route = captureAll
+            ? "all via \(virtualInterface?.name ?? "?") (\(captureIPv6 ? "IPv4 + IPv6" : "IPv4; no IPv6 on this network"))"
+            : (useFakeIP ? "198.18.0.0/16" : "none")
+        TunnelLog.write(.info, "tunnel started fakeIP=\(useFakeIP) route=\(route)")
         log.info("tunnel started fakeIP=\(useFakeIP, privacy: .public) (SwiftTCP)")
         TunnelLifecycleStore.markStarted()
         startMetricsDump()
@@ -237,10 +281,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             OutboundModeStore.save(mode: mode, globalGroup: request.groupName)
             completionHandler?(try? TunnelIPC.encode(.success()))
         case .setCaptureMode:
-            let fakeIP = shared.withLockUnchecked { state -> Bool in
+            let (fakeIP, captureAll, captureIPv6) = shared.withLockUnchecked { state -> (Bool, Bool, Bool) in
                 let next = request.fakeIP ?? state.useFakeIP
                 state.useFakeIP = next
-                return next
+                return (next, state.captureAll, state.captureIPv6)
             }
             Task { [weak self] in
                 guard let self else {
@@ -251,7 +295,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                     let settings = Self.makeNetworkSettings(
                         useFakeIP: fakeIP,
                         dnsServers: self.systemDNS,
-                        ipv6: self.ipv6FakeIP
+                        ipv6: self.ipv6FakeIP,
+                        captureAll: captureAll,
+                        captureIPv6: captureIPv6
                     )
                     try await self.setTunnelNetworkSettings(settings)
                     TunnelLog.write(.info, "capture mode fakeIP=\(fakeIP)")
@@ -300,6 +346,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         let boot = ExtensionBootstrap(providerConfiguration: payload, options: nil)
         guard boot.useFakeIP == useFakeIP else {
             return .failure("restart required: capture mode changed")
+        }
+        let configured = shared.withLockUnchecked { $0.captureAllConfigured }
+        guard boot.captureAllTraffic == configured else {
+            return .failure("restart required: Route All Traffic changed")
         }
         let attributor = shared.withLockUnchecked { $0.attributor }
         let next: Engine
@@ -375,6 +425,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         taken.relayTask?.cancel()
         taken.engine?.stopURLTest()
         await taken.stack?.stop()
+        TunnelEgress.avoid(nil)
         TunnelLog.write(.info, "tunnel stopped")
         log.info("tunnel stopped")
     }
@@ -419,6 +470,37 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             TunnelLog.write(.error, "metrics file write failed")
         }
         publishProxyClients()
+        breakEgressLoops()
+    }
+
+    /// Loops within `loopWindow` that turn "Route All Traffic" off.
+    private static let loopTripCount = 20
+    private static let loopWindow: Duration = .seconds(10)
+
+    /// Falls back to FakeIP-only routes when PrizmX's own connections keep
+    /// coming back through the tunnel, so a binding that does not hold
+    /// cannot take the Mac offline. Each loop is already refused on its own;
+    /// this stops the dials that would fail meanwhile.
+    private func breakEgressLoops() {
+        let total = TunnelEgress.loopCount
+        let tripped = shared.withLockUnchecked { state -> Int? in
+            guard state.captureAll else { return nil }
+            let now = ContinuousClock.now
+            if now - state.loopWindowStart >= Self.loopWindow {
+                state.loopWindowStart = now
+                state.loopWindowBase = total
+            }
+            let recent = total - state.loopWindowBase
+            guard recent >= Self.loopTripCount else { return nil }
+            state.captureAll = false
+            return recent
+        }
+        guard let tripped else { return }
+        TunnelLog.write(
+            .error,
+            "route all traffic turned off: \(tripped) PrizmX connections came back through the tunnel within 10 s"
+        )
+        Task { await self.refreshAfterPathChange(reason: "egress loop") }
     }
 
     /// Root sees every socket; the sandboxed app attributes the mixed-port
@@ -485,18 +567,23 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         guard let engine else { return }
         let captured = PhysicalDNSSnapshot.capture()
         engine.dns.applyPhysicalDNS(captured)
-        let (fakeIP, dnsServers, ipv6) = shared.withLockUnchecked { state in
+        // The new network may have IPv6 or lack it.
+        let physicalIPv6 = Self.physicalNetworkHasIPv6()
+        let (fakeIP, dnsServers, ipv6, captureAll, captureIPv6) = shared.withLockUnchecked { state in
             if !captured.isEmpty {
                 state.systemDNS = captured
             }
-            return (state.useFakeIP, state.systemDNS, state.ipv6FakeIP)
+            state.captureIPv6 = state.captureAll && physicalIPv6
+            return (state.useFakeIP, state.systemDNS, state.ipv6FakeIP, state.captureAll, state.captureIPv6)
         }
-        TunnelLog.write(.info, "path refresh (\(reason)) dns=\(captured)")
+        TunnelLog.write(.info, "path refresh (\(reason)) dns=\(captured)\(captureAll ? " ipv6=\(captureIPv6)" : "")")
         log.info("path refresh (\(reason, privacy: .public)) dns=\(captured, privacy: .public)")
         let settings = Self.makeNetworkSettings(
             useFakeIP: fakeIP,
             dnsServers: dnsServers,
-            ipv6: ipv6
+            ipv6: ipv6,
+            captureAll: captureAll,
+            captureIPv6: captureIPv6
         )
         do {
             try await setTunnelNetworkSettings(settings)
@@ -584,10 +671,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     public static func makeNetworkSettings(
         useFakeIP: Bool,
         dnsServers: [String]?,
-        ipv6: Bool = false
+        ipv6: Bool = false,
+        captureAll: Bool = false,
+        captureIPv6: Bool = false
     ) -> NEPacketTunnelNetworkSettings {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
         settings.mtu = Self.tunnelMTU
+        let captureAll = useFakeIP && captureAll
+        let captureIPv6 = captureAll && captureIPv6
 
         if useFakeIP {
             // Surge-style FakeIP capture: only 198.18.0.0/16 enters the TUN.
@@ -597,6 +688,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             ipv4.includedRoutes = [
                 NEIPv4Route(destinationAddress: "198.18.0.0", subnetMask: "255.255.0.0")
             ]
+            if captureAll {
+                // Every app, also those that dial IP addresses. Our own dials
+                // stay off the tunnel through `TunnelEgress`.
+                ipv4.includedRoutes = [NEIPv4Route.default()]
+                ipv4.excludedRoutes = Self.localIPv4Routes
+            }
             settings.ipv4Settings = ipv4
         } else {
             // System Proxy only: keep the extension alive with a /32 address
@@ -615,7 +712,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             settings.ipv4Settings = ipv4
         }
 
-        if useFakeIP, ipv6 {
+        if useFakeIP, ipv6 || captureIPv6 {
             let ipv6Settings = NEIPv6Settings(
                 addresses: [FakeIPAllocator.gateway6.description],
                 networkPrefixLengths: [64]
@@ -626,6 +723,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                     networkPrefixLength: 64
                 )
             ]
+            if captureIPv6 {
+                // IPv6 too, or it would leave around the tunnel. Without
+                // `dns.ipv6` the stack refuses it (TCP gets a RST) and apps
+                // use IPv4. The FakeIPv6 /64 stays included: it sits inside
+                // the excluded unique-local fc00::/7.
+                ipv6Settings.includedRoutes?.append(NEIPv6Route.default())
+                ipv6Settings.excludedRoutes = Self.localIPv6Routes
+            }
             settings.ipv6Settings = ipv6Settings
         }
 
@@ -640,6 +745,51 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         return settings
     }
+}
+
+extension PacketTunnelProvider {
+    /// A global IPv6 address (2000::/3) on an interface that is up and not
+    /// a tunnel. A path monitor cannot tell: with the tunnel holding the
+    /// IPv6 default route it reports the tunnel's IPv6, even with VPN
+    /// interfaces prohibited.
+    static func physicalNetworkHasIPv6() -> Bool {
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else { return false }
+        defer { freeifaddrs(list) }
+        let tunnels = ["utun", "ipsec", "gif", "stf", "lo"]
+        for entry in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            let flags = Int32(entry.pointee.ifa_flags)
+            guard flags & IFF_UP != 0, flags & IFF_RUNNING != 0,
+                  let address = entry.pointee.ifa_addr,
+                  address.pointee.sa_family == sa_family_t(AF_INET6)
+            else { continue }
+            let name = String(cString: entry.pointee.ifa_name)
+            guard !tunnels.contains(where: { name.hasPrefix($0) }) else { continue }
+            let firstByte = address.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) {
+                $0.pointee.sin6_addr.__u6_addr.__u6_addr8.0
+            }
+            if firstByte & 0xE0 == 0x20 { return true }
+        }
+        return false
+    }
+
+    /// Stays on the physical network with "Route All Traffic": private,
+    /// link-local, multicast and broadcast (LAN devices, the router, mDNS).
+    static let localIPv4Routes = [
+        NEIPv4Route(destinationAddress: "10.0.0.0", subnetMask: "255.0.0.0"),
+        NEIPv4Route(destinationAddress: "172.16.0.0", subnetMask: "255.240.0.0"),
+        NEIPv4Route(destinationAddress: "192.168.0.0", subnetMask: "255.255.0.0"),
+        NEIPv4Route(destinationAddress: "169.254.0.0", subnetMask: "255.255.0.0"),
+        NEIPv4Route(destinationAddress: "224.0.0.0", subnetMask: "240.0.0.0"),
+        NEIPv4Route(destinationAddress: "255.255.255.255", subnetMask: "255.255.255.255"),
+    ]
+
+    /// Link-local, unique-local and multicast.
+    static let localIPv6Routes = [
+        NEIPv6Route(destinationAddress: "fe80::", networkPrefixLength: 10),
+        NEIPv6Route(destinationAddress: "fc00::", networkPrefixLength: 7),
+        NEIPv6Route(destinationAddress: "ff00::", networkPrefixLength: 8),
+    ]
 }
 
 enum PacketTunnelError: Error {

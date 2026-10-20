@@ -157,6 +157,13 @@ struct SettingsPane: View {
                 }
             }
 
+            Section("TUN") {
+                Toggle(isOn: $appModel.captureAllTrafficEnabled) {
+                    Text("Route All Traffic (Experimental)")
+                    Text("TUN also captures apps that connect to IP addresses directly, such as Telegram, games and WebRTC. Local networks stay direct. Restarts TUN.")
+                }
+            }
+
             Section("DNS") {
                 Toggle(isOn: $appModel.overrideDNSEnabled) {
                     Text("Override DNS")

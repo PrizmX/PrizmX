@@ -231,6 +231,26 @@ final class AppModel {
             scheduleReload(reason: "override DNS \(overrideDNSEnabled ? "on" : "off")")
         }
     }
+    /// Settings switch (experimental): TUN takes the default route, so apps
+    /// that dial IP addresses are captured too. `CapturePreferenceStore`
+    /// owns the stored value; the tunnel reads it when it starts.
+    var captureAllTrafficEnabled = false {
+        didSet {
+            guard captureAllTrafficEnabled != oldValue else { return }
+            do {
+                try CapturePreferenceStore.save(.init(allTraffic: captureAllTrafficEnabled))
+            } catch {
+                TunnelLog.write(.error, "capture preference save failed: \(error.localizedDescription)")
+                dashboard.profiles.recordError(error)
+                return
+            }
+            updateTunnelEgress()
+            // Only the tunnel reads it; System Proxy alone has nothing to reload.
+            if tunModeEnabled {
+                scheduleReload(reason: "route all traffic \(captureAllTrafficEnabled ? "on" : "off")")
+            }
+        }
+    }
     var selectedSidebarItem: SidebarItem = .home
     var sessionStartedAt: Date?
     var inspectorScope: InspectorScope = .recent {
@@ -463,6 +483,7 @@ final class AppModel {
             outboundMode = OutboundMode(rawValue: UserDefaults.standard.string(forKey: DefaultsKey.outboundMode) ?? "") ?? .rule
             eventsLogLevel = TunnelLog.minimumLevel
             overrideDNSEnabled = DNSPreferenceStore.load().overrideDNS
+            captureAllTrafficEnabled = CapturePreferenceStore.load().allTraffic
             if dashboard.status == .connected {
                 sessionStartedAt = Date()
             }
@@ -476,6 +497,7 @@ final class AppModel {
             installUIVisibilityTracking()
             startTrafficIngest()
             trackSessionClock()
+            trackTunnelEgress()
             trackAnalyticsProxyState()
             networkLink.onChange = { [weak self] in
                 self?.scheduleEgressRefresh()
@@ -1007,6 +1029,28 @@ final class AppModel {
                 self?.trackSessionClock()
             }
         }
+    }
+
+    /// While the tunnel holds the default route, this app's own connections
+    /// (System Proxy engine, delay tests) would go through it and be routed
+    /// a second time; they skip PrizmX's utun instead.
+    private func trackTunnelEgress() {
+        _ = withObservationTracking {
+            (dashboard.status, captureAllTrafficEnabled)
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.updateTunnelEgress()
+                self?.trackTunnelEgress()
+            }
+        }
+        updateTunnelEgress()
+    }
+
+    private func updateTunnelEgress() {
+        let tunnel = captureAllTrafficEnabled && dashboard.status == .connected
+            ? TunnelEgress.interfaceName(holding: TunnelEgress.tunnelAddress)
+            : nil
+        TunnelEgress.avoid(interfaceNamed: tunnel)
     }
 
     /// Reports settled TUN / System Proxy state to analytics. TUN counts only
