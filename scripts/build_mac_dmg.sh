@@ -109,6 +109,10 @@ PROFILE_DIRS=(
   "$HOME/Library/MobileDevice/Provisioning Profiles"
 )
 
+# Private (0700) scratch dir for the decoded .p12 and provisioning profiles.
+# The EXIT trap removes it, so key material never outlives a failed step.
+SECRETS_TMP="$(mktemp -d "${TMPDIR:-/tmp}/prizmx-dmg.XXXXXX")"
+
 SIGNING_KEYCHAIN=""
 PREV_DEFAULT_KEYCHAIN=""
 PREV_KEYCHAIN_LIST=()
@@ -125,6 +129,9 @@ cleanup_signing() {
   fi
   if [ -n "${SIGNING_KEYCHAIN:-}" ]; then
     security delete-keychain "$SIGNING_KEYCHAIN" >/dev/null 2>&1 || true
+  fi
+  if [ -n "${SECRETS_TMP:-}" ]; then
+    rm -rf "$SECRETS_TMP"
   fi
 }
 trap cleanup_signing EXIT
@@ -155,8 +162,8 @@ install_profile_b64() {
     return 1
   fi
   local tmp plist uuid
-  tmp="$(mktemp)"
-  plist="$(mktemp)"
+  tmp="$(mktemp "$SECRETS_TMP/profile.XXXXXX")"
+  plist="$(mktemp "$SECRETS_TMP/profile-plist.XXXXXX")"
   printf '%s' "$b64" | base64 --decode >"$tmp"
   decode_profile "$tmp" "$plist"
   uuid="$(profile_buddy "$plist" UUID)"
@@ -173,7 +180,7 @@ install_profile_b64() {
 remove_profiles_for_bundle() {
   local bundle="$1"
   local dir f plist appid
-  plist="$(mktemp)"
+  plist="$(mktemp "$SECRETS_TMP/plist.XXXXXX")"
   for dir in "${PROFILE_DIRS[@]}"; do
     [ -d "$dir" ] || continue
     for f in "$dir"/*.mobileprovision; do
@@ -196,26 +203,37 @@ install_signing_from_env() {
     fi
     SIGNING_KEYCHAIN="$(mktemp "${TMPDIR:-/tmp}/prizmx-signing.XXXXXX.keychain-db")"
     rm -f "$SIGNING_KEYCHAIN"
-    local kc_pass="${KEYCHAIN_PASSWORD:-$SIGNING_KEYCHAIN}"
+    # Without KEYCHAIN_PASSWORD use a random one, not a guessable value.
+    local kc_pass="${KEYCHAIN_PASSWORD:-}"
+    if [ -z "$kc_pass" ]; then
+      kc_pass="$(uuidgen)"
+    fi
     local cert_path
-    cert_path="$(mktemp)"
+    cert_path="$(mktemp "$SECRETS_TMP/cert.XXXXXX")"
     printf '%s' "$APPLE_CERTIFICATE_BASE64" | base64 --decode >"$cert_path"
+    # security(1) has no non-interactive way to take these passwords other
+    # than arguments (omitting them prompts via TTY / GUI), so they stay in
+    # argv. Nothing here traces commands, so they never reach the log.
     security create-keychain -p "$kc_pass" "$SIGNING_KEYCHAIN"
     security set-keychain-settings -lut 21600 "$SIGNING_KEYCHAIN"
     security unlock-keychain -p "$kc_pass" "$SIGNING_KEYCHAIN"
+    # Only codesign (and security itself) may use the private key; no -A,
+    # which would let any app use it without a prompt.
     security import "$cert_path" \
       -P "$APPLE_CERTIFICATE_PASSWORD" \
-      -A -t cert -f pkcs12 \
+      -t cert -f pkcs12 \
       -T /usr/bin/codesign -T /usr/bin/security \
       -k "$SIGNING_KEYCHAIN"
+    rm -f "$cert_path"
     local ca_dir ca
     ca_dir="$(mktemp -d)"
     curl -fsSL "https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer" \
       -o "$ca_dir/DeveloperIDG2CA.cer"
     curl -fsSL "https://www.apple.com/certificateauthority/AppleRootCA-G3.cer" \
       -o "$ca_dir/AppleRootCA-G3.cer"
+    # Public CA certificates only (no private key, so no access list needed).
     for ca in "$ca_dir"/*.cer; do
-      security import "$ca" -k "$SIGNING_KEYCHAIN" -A >/dev/null || true
+      security import "$ca" -k "$SIGNING_KEYCHAIN" >/dev/null || true
     done
     rm -rf "$ca_dir"
     while IFS= read -r kc; do
@@ -229,7 +247,6 @@ install_signing_from_env() {
     security set-key-partition-list \
       -S apple-tool:,apple:,codesign: \
       -s -k "$kc_pass" "$SIGNING_KEYCHAIN"
-    rm -f "$cert_path"
     echo "▶ Imported APPLE_CERTIFICATE_BASE64 into temporary keychain"
   fi
   remove_profiles_for_bundle "app.prizmx.macos"
@@ -243,7 +260,7 @@ resolve_profile() {
   local team="${APPLE_TEAM_ID:-}"
   local want="${team}.${bundle}"
   local dir f plist appid name uuid
-  plist="$(mktemp)"
+  plist="$(mktemp "$SECRETS_TMP/plist.XXXXXX")"
   for dir in "${PROFILE_DIRS[@]}"; do
     [ -d "$dir" ] || continue
     for f in "$dir"/*.mobileprovision; do
@@ -267,7 +284,7 @@ resolve_profile() {
 dump_profiles() {
   echo "▶ Installed provisioning profiles:"
   local dir f plist appid name uuid
-  plist="$(mktemp)"
+  plist="$(mktemp "$SECRETS_TMP/plist.XXXXXX")"
   for dir in "${PROFILE_DIRS[@]}"; do
     [ -d "$dir" ] || continue
     echo "  $dir"
@@ -414,6 +431,8 @@ if ! skip_flag "${SKIP_NOTARIZE:-}"; then
   ditto -c -k --keepParent "$APP_PATH" "$ZIP_NAME"
 
   echo "▶ Submitting app for notarization…"
+  # notarytool takes the app-specific password only as --password (omitting
+  # it prompts on a TTY), so it stays in argv here and for the DMG below.
   xcrun notarytool submit "$ZIP_NAME" \
     --apple-id "$APPLE_ID" \
     --password "$APPLE_APP_SPECIFIC_PASSWORD" \

@@ -64,6 +64,8 @@ Debug and a DMG install share the same bundle IDs. Do not Run from Xcode and use
 
 Push a tag `vX.Y.Z`. GitHub Actions (`.github/workflows/release-macos.yml`) archives, signs, notarizes, and attaches a DMG to the GitHub Release.
 
+CI and releases build the sibling repos at the commits pinned in `dependencies.lock`. Before tagging, push the siblings, run `./scripts/update_dependencies_lock.sh`, and commit the updated lock.
+
 Locally, export the variables documented in `scripts/build_mac_dmg.sh` (or a gitignored `scripts/dmg.env`) and run:
 
 ```bash

@@ -1,6 +1,9 @@
 # Builds a signed, notarized macOS DMG when a version tag is pushed
 # (e.g. v1.0.0), then creates a GitHub Release and uploads the DMG.
 #
+# Sibling repos (PrizmX-Foundation, PrizmX-Kit, SwiftTCP) are checked out at
+# the commits pinned in dependencies.lock (scripts/update_dependencies_lock.sh).
+#
 # Required repository secrets:
 #   APPLE_CERTIFICATE_BASE64      Developer ID Application .p12 (base64)
 #   APPLE_CERTIFICATE_PASSWORD    .p12 export password
@@ -33,46 +36,66 @@ jobs:
     # Pin the image and Xcode: a `macos-latest` / default-Xcode bump silently
     # changes how release builds compile.
     runs-on: macos-26
+    # Non-secret settings only. Signing and notarization secrets are scoped to
+    # the build step below, so no other step (or action) can read them.
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
       APP_NAME: PrizmX
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-      CERT_NAME: ${{ secrets.APPLE_CERT_NAME }}
-      APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      APPLE_PROVISION_APP_BASE64: ${{ secrets.APPLE_PROVISION_APP_BASE64 }}
-      APPLE_PROVISION_TUNNEL_BASE64: >-
-        ${{ secrets.APPLE_PROVISION_TUNNEL_BASE64 }}
-      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
       SKIP_FINDER_LAYOUT: "true"
       # Monotonic CFBundleVersion; local builds still fall back to commit count.
       BUILD_NUMBER: ${{ github.run_number }}
     steps:
+      # Actions are pinned to full commit SHAs; the comment names the tag.
+      # persist-credentials: false keeps GITHUB_TOKEN out of .git/config, where
+      # the build step could otherwise read it.
       - name: Checkout app
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           path: PrizmX
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Read pinned sibling commits
+        id: deps
+        run: |
+          # dependencies.lock pins each sibling repo to a full commit SHA, so a
+          # release never builds whatever their default branch happens to be.
+          lock=PrizmX/dependencies.lock
+          for pair in foundation=PrizmX-Foundation kit=PrizmX-Kit swifttcp=SwiftTCP; do
+            key="${pair%%=*}"
+            repo="${pair#*=}"
+            sha="$(sed -n "s/^${repo}=//p" "$lock")"
+            if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error file=${lock}::Missing or invalid pin for ${repo}"
+              exit 1
+            fi
+            echo "${key}=${sha}" >> "$GITHUB_OUTPUT"
+            echo "${repo} @ ${sha}"
+          done
 
       - name: Checkout PrizmX-Foundation
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: PrizmX/PrizmX-Foundation
+          ref: ${{ steps.deps.outputs.foundation }}
           path: PrizmX-Foundation
+          persist-credentials: false
 
       - name: Checkout PrizmX-Kit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: PrizmX/PrizmX-Kit
+          ref: ${{ steps.deps.outputs.kit }}
           path: PrizmX-Kit
+          persist-credentials: false
 
       - name: Checkout SwiftTCP
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: PrizmX/SwiftTCP
+          ref: ${{ steps.deps.outputs.swifttcp }}
           path: SwiftTCP
+          persist-credentials: false
 
       - name: Resolve version from tag
         id: version
@@ -83,18 +106,37 @@ jobs:
 
       - name: Build, sign, and notarize DMG
         id: build
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          CERT_NAME: ${{ secrets.APPLE_CERT_NAME }}
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_PROVISION_APP_BASE64: ${{ secrets.APPLE_PROVISION_APP_BASE64 }}
+          APPLE_PROVISION_TUNNEL_BASE64: >-
+            ${{ secrets.APPLE_PROVISION_TUNNEL_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           chmod +x PrizmX/scripts/build_mac_dmg.sh
-          ./PrizmX/scripts/build_mac_dmg.sh \
-            "${{ steps.version.outputs.version }}"
+          ./PrizmX/scripts/build_mac_dmg.sh "$RELEASE_VERSION"
 
+      # gh CLI ships on the runner image; no third-party release action.
+      # A re-run reuses the existing release and replaces the DMG asset.
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: PrizmX ${{ steps.version.outputs.version }} (macOS)
-          generate_release_notes: true
-          files: |
-            ${{ steps.build.outputs.dmg_path }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          TITLE: PrizmX ${{ steps.version.outputs.version }} (macOS)
+          DMG_PATH: ${{ steps.build.outputs.dmg_path }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$DMG_PATH" --clobber
+          else
+            gh release create "$TAG" "$DMG_PATH" \
+              --verify-tag \
+              --title "$TITLE" \
+              --generate-notes
+          fi

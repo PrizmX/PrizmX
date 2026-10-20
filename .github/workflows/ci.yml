@@ -1,0 +1,87 @@
+# Compiles the app (unsigned) on pull requests and pushes to main.
+#
+# Sibling repos (PrizmX-Foundation, PrizmX-Kit, SwiftTCP) are checked out at
+# the commits pinned in dependencies.lock, same as the release workflow.
+# No secrets: nothing is signed or notarized here.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    # Same image and Xcode pin as release-macos.yml.
+    runs-on: macos-26
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      # Actions are pinned to full commit SHAs; the comment names the tag.
+      - name: Checkout app
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          path: PrizmX
+          persist-credentials: false
+
+      - name: Read pinned sibling commits
+        id: deps
+        run: |
+          # Keep in sync with the same step in release-macos.yml.
+          lock=PrizmX/dependencies.lock
+          for pair in foundation=PrizmX-Foundation kit=PrizmX-Kit swifttcp=SwiftTCP; do
+            key="${pair%%=*}"
+            repo="${pair#*=}"
+            sha="$(sed -n "s/^${repo}=//p" "$lock")"
+            if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error file=${lock}::Missing or invalid pin for ${repo}"
+              exit 1
+            fi
+            echo "${key}=${sha}" >> "$GITHUB_OUTPUT"
+            echo "${repo} @ ${sha}"
+          done
+
+      - name: Checkout PrizmX-Foundation
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: PrizmX/PrizmX-Foundation
+          ref: ${{ steps.deps.outputs.foundation }}
+          path: PrizmX-Foundation
+          persist-credentials: false
+
+      - name: Checkout PrizmX-Kit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: PrizmX/PrizmX-Kit
+          ref: ${{ steps.deps.outputs.kit }}
+          path: PrizmX-Kit
+          persist-credentials: false
+
+      - name: Checkout SwiftTCP
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: PrizmX/SwiftTCP
+          ref: ${{ steps.deps.outputs.swifttcp }}
+          path: SwiftTCP
+          persist-credentials: false
+
+      - name: Build app (unsigned)
+        run: |
+          # Release, not Debug: the scheme's "Install Debug to /Applications"
+          # post-action only runs for Debug.
+          xcodebuild \
+            -project PrizmX/PrizmX.xcodeproj \
+            -scheme PrizmX \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
