@@ -390,6 +390,11 @@ final class AppModel {
     /// clears the node DNS cache once the engines are down.
     @ObservationIgnored
     private var dnsCacheClearPending = false
+    @ObservationIgnored
+    nonisolated(unsafe) private var providerRefreshTask: Task<Void, Never>?
+    /// Provider files the catalog was last parsed with (`ProviderStore.stamp`).
+    @ObservationIgnored
+    private var providerStamp: Date?
 
     init(preview: Bool = false) {
         if preview {
@@ -439,7 +444,16 @@ final class AppModel {
             nodeList = NodeListViewModel(profiles: profiles)
             menuBarOnly = UserDefaults.standard.bool(forKey: DefaultsKey.menuBarOnly)
             systemProxyEnabled = UserDefaults.standard.bool(forKey: DefaultsKey.systemProxyEnabled)
-            tunModeEnabled = UserDefaults.standard.object(forKey: DefaultsKey.tunModeEnabled) as? Bool ?? true
+            // New users start with TUN off: it needs the system extension
+            // approved, which must not be the first thing they see. Earlier
+            // builds defaulted it on and stored it only once toggled, so a
+            // user who already has profiles keeps it on.
+            let storedTUN = UserDefaults.standard.object(forKey: DefaultsKey.tunModeEnabled) as? Bool
+            let tunDefault = storedTUN ?? !profiles.profiles.isEmpty
+            tunModeEnabled = tunDefault
+            if storedTUN == nil {
+                UserDefaults.standard.set(tunDefault, forKey: DefaultsKey.tunModeEnabled)
+            }
             allowLANEnabled = UserDefaults.standard.bool(forKey: DefaultsKey.allowLANEnabled)
             menuBarConnectedStyle = MenuBarConnectedStyle(
                 rawValue: UserDefaults.standard.string(forKey: DefaultsKey.menuBarConnectedStyle) ?? ""
@@ -500,6 +514,7 @@ final class AppModel {
             }
             persistOutboundMode()
             refreshInboundListen()
+            startProviderRefresh()
         }
     }
 
@@ -521,6 +536,7 @@ final class AppModel {
         trafficIngestTask?.cancel()
         takeoverTask?.cancel()
         egressRefreshTask?.cancel()
+        providerRefreshTask?.cancel()
         if let keyMonitor {
             NSEvent.removeMonitor(keyMonitor)
         }
@@ -563,6 +579,9 @@ final class AppModel {
 
     private func ingestTrafficTick() {
         let metrics = dashboard.vpn.lastMetrics
+        if nodeList.liveGroupSelections != metrics.groupSelections {
+            nodeList.liveGroupSelections = metrics.groupSelections
+        }
         trafficLedger.ingest(metrics)
         ingestAppByteRates(metrics)
         inspectorHistory.ingest(metrics)
@@ -703,7 +722,7 @@ final class AppModel {
             dashboard.profiles.recordError(error)
             return
         }
-        Task { await reloadLiveEgress() }
+        scheduleReload(reason: "overlay saved")
     }
 
     /// UI catalog already rebuilt; restart Packet Tunnel / mixed-port so the
@@ -712,6 +731,41 @@ final class AppModel {
     func didChangeActiveProfile() {
         persistOutboundMode()
         scheduleReload(reason: "active profile changed")
+        Task { await refreshProviders() }
+    }
+
+    /// Downloads the active profile's rule / proxy providers that are
+    /// missing or due. The catalog is re-parsed whenever the files differ
+    /// from the ones it was built with (whoever downloaded them), and a live
+    /// engine reloads when this call changed any.
+    func refreshProviders(force: Bool = false) async {
+        guard let config = dashboard.profiles.activeProfile?.rawConfig else { return }
+        let changed = await ProviderStore.prepare(configText: config, force: force)
+        let stamp = ProviderStore.stamp(configText: config)
+        if stamp != providerStamp {
+            providerStamp = stamp
+            dashboard.profiles.rebuildCatalog()
+        }
+        if changed, tunModeEnabled || systemProxyEnabled || allowLANEnabled {
+            scheduleReload(reason: "providers updated")
+        }
+    }
+
+    /// Keeps providers within their `interval` while the app runs. Waits a
+    /// moment first: the launch takeover downloads what is missing.
+    private func startProviderRefresh() {
+        providerRefreshTask?.cancel()
+        providerRefreshTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.refreshProviders()
+                let config = self.dashboard.profiles.activeProfile?.rawConfig ?? ""
+                let due = ProviderStore.nextRefresh(configText: config)?.timeIntervalSinceNow ?? 3_600
+                // At least hourly (a new profile may name providers), at most every 5 min.
+                try? await Task.sleep(for: .seconds(min(max(due, 300), 3_600)))
+            }
+        }
     }
 
     /// Forgets cached DNS answers and restarts a live engine so node
@@ -723,8 +777,12 @@ final class AppModel {
 
     private func scheduleReload(reason: String) {
         TunnelLog.write(.info, "\(reason), reloading live egress")
-        takeoverTask?.cancel()
+        let previous = takeoverTask
+        previous?.cancel()
         takeoverTask = Task { @MainActor in
+            // Let a superseded reload unwind first: two in flight could stop
+            // the tunnel the newer one just reloaded, or land the older config last.
+            await previous?.value
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
             await reloadLiveEgress()
@@ -781,6 +839,36 @@ final class AppModel {
             return
         }
         mixedPortRuntime.invalidate()
+        // A connected tunnel swaps its engine in place: open connections and
+        // FakeIP answers survive. A refused or unanswered reload falls back
+        // to a restart.
+        if tunModeEnabled, dashboard.status == .connected {
+            let config = dashboard.profiles.activeProfile?.rawConfig ?? VPNManager.defaultDirectConfig
+            let overlay = dashboard.profiles.overlay
+            // Forget node addresses before the reload re-resolves them for
+            // the new engine. The old engine may still write some back; a
+            // stale pin is healed by re-resolution at dial time.
+            clearPendingDNSCache()
+            do {
+                try await dashboard.vpn.reloadConfiguration(
+                    configText: config,
+                    fakeIP: true,
+                    systemProxy: false,
+                    allowLAN: allowLANEnabled,
+                    overlay: overlay
+                )
+                guard !Task.isCancelled else { return }
+                await applyMixedPort(config: config, overlay: overlay)
+                scheduleEgressRefresh()
+                return
+            } catch is CancellationError {
+                return
+            } catch {
+                // Superseded meanwhile: the newer request owns the tunnel.
+                guard !Task.isCancelled else { return }
+                TunnelLog.write(.warn, "live reload failed, restarting the tunnel: \(error.localizedDescription)")
+            }
+        }
         if isVPNOn {
             dashboard.vpn.stopVPN()
             try? await Task.sleep(for: .milliseconds(400))
@@ -814,8 +902,10 @@ final class AppModel {
     /// Coalesce rapid TUN / System Proxy / Allow LAN flips onto the last state
     /// so apply+restore cannot race and re-prompt.
     private func scheduleTakeover() {
-        takeoverTask?.cancel()
+        let previous = takeoverTask
+        previous?.cancel()
         takeoverTask = Task { @MainActor in
+            await previous?.value
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
             await applyTakeover()
@@ -838,32 +928,11 @@ final class AppModel {
         }
         let config = dashboard.profiles.activeProfile?.rawConfig ?? VPNManager.defaultDirectConfig
         let overlay = dashboard.profiles.overlay
-        refreshInboundListen()
         // Mixed-port first: it runs in this process and comes up in well under
         // a second, while TUN waits on the system extension and the tunnel.
         // After an unclean exit (crash, Xcode Stop) the system proxy still
         // points at its port, so every app is refused until it listens.
-        if systemProxyEnabled || allowLANEnabled {
-            do {
-                // The runtime drops superseded requests and restores the
-                // system proxy itself when an apply fails.
-                try await mixedPortRuntime.apply(
-                    configText: config,
-                    overlay: overlay,
-                    allowLAN: allowLANEnabled,
-                    setSystemProxy: systemProxyEnabled
-                )
-                mixedPortListenError = nil
-            } catch {
-                mixedPortListenError = error.localizedDescription
-                dashboard.vpn.reportHostError(error)
-                TunnelLog.write(.error, "mixed-port failed: \(error.localizedDescription)")
-            }
-        } else {
-            mixedPortRuntime.shutdown()
-            mixedPortListenError = nil
-        }
-        syncMixedPortState()
+        await applyMixedPort(config: config, overlay: overlay)
         // A newer takeover was scheduled; it owns the TUN state.
         guard !Task.isCancelled else { return }
         if tunModeEnabled {
@@ -889,6 +958,32 @@ final class AppModel {
             dashboard.vpn.stopVPN()
         }
         scheduleEgressRefresh()
+    }
+
+    /// System Proxy / Allow LAN → mixed-port in this process, or off.
+    private func applyMixedPort(config: String, overlay: ProfileOverlay) async {
+        refreshInboundListen()
+        if systemProxyEnabled || allowLANEnabled {
+            do {
+                // The runtime drops superseded requests and restores the
+                // system proxy itself when an apply fails.
+                try await mixedPortRuntime.apply(
+                    configText: config,
+                    overlay: overlay,
+                    allowLAN: allowLANEnabled,
+                    setSystemProxy: systemProxyEnabled
+                )
+                mixedPortListenError = nil
+            } catch {
+                mixedPortListenError = error.localizedDescription
+                dashboard.vpn.reportHostError(error)
+                TunnelLog.write(.error, "mixed-port failed: \(error.localizedDescription)")
+            }
+        } else {
+            mixedPortRuntime.shutdown()
+            mixedPortListenError = nil
+        }
+        syncMixedPortState()
     }
 
     /// Mirrors the runtime's real state into the UI and the metrics poller.

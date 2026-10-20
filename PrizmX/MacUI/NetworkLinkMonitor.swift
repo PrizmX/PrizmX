@@ -28,7 +28,8 @@ nonisolated enum NetworkLinkKind: Equatable {
 /// Live label for the Home "Network" fact: Wi-Fi SSID, else the primary NIC.
 ///
 /// macOS only returns `CWInterface.ssid()` after Location When In Use is
-/// granted; CoreWLAN also has to be read on the main thread.
+/// granted; CoreWLAN also has to be read on the main thread. Location is
+/// asked for only when the user clicks the Network fact on Home.
 @MainActor
 @Observable
 final class NetworkLinkMonitor: NSObject, CLLocationManagerDelegate {
@@ -36,6 +37,8 @@ final class NetworkLinkMonitor: NSObject, CLLocationManagerDelegate {
     private(set) var kind: NetworkLinkKind = .other
     /// Primary interface IPv4, for the LAN widget listen address.
     private(set) var lanIPv4 = "—"
+    /// On Wi-Fi and Location was never asked: the SSID can be unlocked.
+    private(set) var canRequestSSIDAccess = false
     var onChange: (@MainActor () -> Void)?
     private let monitor = NWPathMonitor()
     private let location = CLLocationManager()
@@ -64,10 +67,13 @@ final class NetworkLinkMonitor: NSObject, CLLocationManagerDelegate {
 
     private func apply(_ path: NWPath) {
         latestPath = path
-        if path.status == .satisfied, Self.usesWiFi(path) {
-            requestSSIDAccessIfNeeded()
-        }
         refreshTitle()
+    }
+
+    /// Asks for Location When In Use so the Wi-Fi name can be shown.
+    func requestSSIDAccess() {
+        guard location.authorizationStatus == .notDetermined else { return }
+        location.requestWhenInUseAuthorization()
     }
 
     private func refreshTitle() {
@@ -77,19 +83,14 @@ final class NetworkLinkMonitor: NSObject, CLLocationManagerDelegate {
         title = snapshot.title
         kind = snapshot.kind
         lanIPv4 = ip
+        let canRequest = snapshot.kind == .wifi && location.authorizationStatus == .notDetermined
+        if canRequestSSIDAccess != canRequest {
+            canRequestSSIDAccess = canRequest
+        }
         if changed, hasPublished {
             onChange?()
         }
         hasPublished = true
-    }
-
-    private func requestSSIDAccessIfNeeded() {
-        switch location.authorizationStatus {
-        case .notDetermined:
-            location.requestWhenInUseAuthorization()
-        default:
-            break
-        }
     }
 
     nonisolated private static func usesWiFi(_ path: NWPath) -> Bool {

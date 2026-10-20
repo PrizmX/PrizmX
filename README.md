@@ -28,6 +28,8 @@ Outbound protocols (imported from Clash YAML, Surge INI and sing-box):
 
 Not imported: Hysteria, TUIC, WireGuard, ShadowsocksR UDP, HTTP/2 (`h2`) transport, `client-fingerprint`, Mux. Details live in [PrizmX-Foundation](https://github.com/PrizmX/PrizmX-Foundation#outbound-protocols).
 
+Clash / mihomo YAML keys that are not supported (proxy chains, some rule types, DNS transports, …) and how each is handled are listed under [Clash YAML compatibility](https://github.com/PrizmX/PrizmX-Foundation#clash-yaml-compatibility). Skipped entries are shown in the app under Profiles.
+
 HTTP capture, decrypt, and rewrite are **out of scope** for open-core. Those belong in PrizmX-Premium / PrizmX-Pro.
 
 ## Layout

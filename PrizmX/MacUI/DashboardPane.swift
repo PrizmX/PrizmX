@@ -38,7 +38,22 @@ struct HomePane: View {
         heldInputs.value(key, live: appModel.anyWindowVisible, read)
     }
 
+    /// Set when the first profile is added from the welcome page; it then
+    /// stays up until Done so the user can pick System Proxy / TUN.
+    @State private var isFinishingWelcome = false
+
     var body: some View {
+        if appModel.dashboard.profiles.profiles.isEmpty || isFinishingWelcome {
+            WelcomeView { isFinishingWelcome = false }
+                .navigationTitle("Home")
+                .onAppear { isFinishingWelcome = true }
+        } else {
+            board
+        }
+    }
+
+    @ViewBuilder
+    private var board: some View {
         let placed = layout.packed()
         let rows = placed.map { $0.row + $0.size.rows }.max() ?? 0
 
@@ -177,13 +192,16 @@ struct HomePane: View {
     private func headerFacts(unit: CGFloat) -> some View {
         HStack(alignment: .top, spacing: WidgetGrid.spacing) {
             headerFact("Network") {
-                HStack(spacing: 6) {
-                    Image(systemName: appModel.networkLink.kind.systemImage)
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
-                    Text(appModel.networkLink.title)
-                        .font(.headline)
-                        .lineLimit(1)
+                if appModel.networkLink.canRequestSSIDAccess {
+                    Button {
+                        appModel.networkLink.requestSSIDAccess()
+                    } label: {
+                        networkFactLabel
+                    }
+                    .buttonStyle(.plain)
+                    .help("Allow Location access to show the Wi-Fi name")
+                } else {
+                    networkFactLabel
                 }
             }
             .frame(width: unit, alignment: .leading)
@@ -238,6 +256,22 @@ struct HomePane: View {
                 }
             }
             .frame(width: unit, alignment: .leading)
+        }
+    }
+
+    private var networkFactLabel: some View {
+        HStack(spacing: 6) {
+            Image(systemName: appModel.networkLink.kind.systemImage)
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            Text(appModel.networkLink.title)
+                .font(.headline)
+                .lineLimit(1)
+            if appModel.networkLink.canRequestSSIDAccess {
+                Image(systemName: "info.circle")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 

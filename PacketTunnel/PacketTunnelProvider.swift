@@ -35,6 +35,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         /// their clients for `ProxyClientStore`.
         var attributor: ProcessFlowAttributor?
         var proxyListenPorts: Set<UInt16> = []
+        /// A config reload is building its engine.
+        var reloading = false
     }
 
     private let shared = OSAllocatedUnfairLock(uncheckedState: SharedState())
@@ -75,6 +77,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         get { shared.withLockUnchecked { $0.ipv6FakeIP } }
         set { shared.withLockUnchecked { $0.ipv6FakeIP = newValue } }
     }
+    /// Engine new flows and DNS answers use. Relays read it per flow, so a
+    /// config reload swaps it without touching open flows or the stack.
+    private let currentEngine = EngineSlot()
     private let log = Logger(subsystem: "app.prizmx", category: "PacketTunnel")
     /// Last 1s snapshot for `handleAppMessage`; the host UI reads the kit file.
     private let lastMetrics = OSAllocatedUnfairLock(initialState: TrafficSnapshot.zero)
@@ -185,6 +190,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             await self.stack?.stop()
             self.stack = nil
             self.engine = nil
+            currentEngine.set(nil)
             throw error
         }
 
@@ -257,7 +263,75 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         case .clearFlows:
             engine?.traffic.clearRecent()
             completionHandler?(try? TunnelIPC.encode(.success()))
+        case .reloadConfig:
+            guard let data = request.providerConfiguration,
+                  let payload = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+            else {
+                completionHandler?(try? TunnelIPC.encode(.failure("reloadConfig missing providerConfiguration")))
+                return
+            }
+            let box = UncheckedSendableBox(payload)
+            Task { [weak self] in
+                guard let self else {
+                    completionHandler?(try? TunnelIPC.encode(.failure("deallocated")))
+                    return
+                }
+                self.reply(await self.reloadEngine(with: box.value), completionHandler)
+            }
         }
+    }
+
+    /// Builds an engine from `payload` and swaps it in. The SwiftTCP stack,
+    /// its FakeIP table and every open flow stay; only new flows use the new
+    /// rules. A change to the virtual NIC (FakeIP / IPv6) needs a restart.
+    private func reloadEngine(with payload: [String: Any]) async -> TunnelIPC.Response {
+        // One at a time: two overlapping swaps would each stop the same old
+        // engine and leave the other's url-test running.
+        let claimed = shared.withLockUnchecked { state -> Bool in
+            guard !state.reloading else { return false }
+            state.reloading = true
+            return true
+        }
+        guard claimed else { return .failure("a reload is already in progress") }
+        defer { shared.withLockUnchecked { $0.reloading = false } }
+        guard let stack, let oldEngine = engine else {
+            return .failure("tunnel is not running")
+        }
+        let boot = ExtensionBootstrap(providerConfiguration: payload, options: nil)
+        guard boot.useFakeIP == useFakeIP else {
+            return .failure("restart required: capture mode changed")
+        }
+        let attributor = shared.withLockUnchecked { $0.attributor }
+        let next: Engine
+        do {
+            next = try boot.makeEngine(flowAttributor: attributor, traffic: oldEngine.traffic)
+        } catch {
+            TunnelLog.write(.error, "reload failed: \(error.localizedDescription)")
+            return .failure(error.localizedDescription)
+        }
+        guard next.dns.settings.ipv6 == ipv6FakeIP else {
+            return .failure("restart required: IPv6 changed")
+        }
+        let listenPorts = Set(InboundListenConfig.parse(from: boot.configText).sockets.map(\.port))
+        // Swap only if the tunnel is still the one this reload started on:
+        // a stop (or restart) while the engine was building wins.
+        let swapped = shared.withLockUnchecked { state -> Bool in
+            guard state.stack === stack, state.engine === oldEngine else { return false }
+            state.engine = next
+            state.proxyListenPorts = listenPorts
+            if !boot.systemDNS.isEmpty { state.systemDNS = boot.systemDNS }
+            return true
+        }
+        guard swapped else { return .failure("the tunnel changed during the reload") }
+        currentEngine.set(next)
+        await stack.updateResolution(fakeIPFilter: next.dns.settings.fakeIPFilter, dns: next.dns)
+        oldEngine.stopURLTest()
+        next.startURLTest()
+        TunnelLog.write(
+            .info,
+            "engine reloaded rules=\(next.router.rules.count) nodes=\(next.nodeManager.nodesByID.count) groups=\(next.nodeManager.groupsByName.count)"
+        )
+        return .success()
     }
 
     // MARK: - Stop
@@ -293,6 +367,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             state.attributor = nil
             return snapshot
         }
+        currentEngine.set(nil)
         taken.pathMonitor?.cancel()
         taken.pathRefreshTask?.cancel()
         stopMetricsDump()
@@ -336,7 +411,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private func publishMetrics() {
-        let snapshot = engine?.traffic.snapshot() ?? .zero
+        var snapshot = engine?.traffic.snapshot() ?? .zero
+        // The app shows which member each url-test / fallback group uses.
+        snapshot.groupSelections = engine?.nodeManager.autoSelections() ?? [:]
         lastMetrics.withLock { $0 = snapshot }
         if !TunnelMetricsStore.save(snapshot) {
             TunnelLog.write(.error, "metrics file write failed")
@@ -458,11 +535,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         // `NEPacketTunnelFlow.writePackets` is thread-safe; the wrapper is
         // `@unchecked Sendable` because the system type is not Sendable.
         let flow = packetFlow
+        currentEngine.set(engine)
+        let current = currentEngine
         let stack = TUNStack(
             fakeIP: useFakeIP ? FakeIPAllocator() : nil,
             fakeIPFilter: engine.dns.settings.fakeIPFilter,
             dns: engine.dns,
-            dnsPolicy: { host in await engine.dnsPolicy(host: host) },
+            dnsPolicy: { host in await current.engine?.dnsPolicy(host: host) },
             ipv6: engine.dns.settings.ipv6,
             onOutput: { packets in
                 guard !packets.isEmpty else { return }
@@ -480,20 +559,21 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         self.engine = engine
 
         // Accept SwiftTCP streams and splice each one through Engine
-        // (DIRECT / Shadowsocks / VLESS) with structured concurrency.
-        let engineRef = engine
+        // (DIRECT / Shadowsocks / VLESS) with structured concurrency. Each
+        // flow takes the engine current when it opens (config reloads).
         engine.startURLTest()
         relayTask = Task {
             await withTaskGroup(of: Void.self) { group in
                 group.addTask {
                     for await stream in await stack.tcpConnections() {
+                        let engine = current.engine ?? engine
                         Task {
-                            await EngineTCPRelay.pipe(stream: stream, engine: engineRef)
+                            await EngineTCPRelay.pipe(stream: stream, engine: engine)
                         }
                     }
                 }
                 group.addTask {
-                    await TUNUDPRelay.run(stack: stack, engine: engineRef)
+                    await TUNUDPRelay.run(stack: stack, engineProvider: { current.engine ?? engine })
                 }
             }
         }
@@ -564,4 +644,22 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
 enum PacketTunnelError: Error {
     case deallocated
+}
+
+/// The engine relays hand new flows to; swapped by a config reload.
+final class EngineSlot: Sendable {
+    private let box = OSAllocatedUnfairLock<Engine?>(initialState: nil)
+
+    var engine: Engine? { box.withLock { $0 } }
+
+    func set(_ engine: Engine?) {
+        box.withLock { $0 = engine }
+    }
+}
+
+/// Carries a non-Sendable value (a property-list dictionary) into a Task
+/// that is its only user.
+private struct UncheckedSendableBox<Value>: @unchecked Sendable {
+    let value: Value
+    init(_ value: Value) { self.value = value }
 }

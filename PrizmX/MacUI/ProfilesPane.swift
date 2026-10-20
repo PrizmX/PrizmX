@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
+import PrizmXConfig
 import PrizmXServices
 import PrizmXUIEngine
 
@@ -21,6 +22,12 @@ struct ProfilesPane: View {
     @State private var isImportingURL = false
     @State private var errorMessage: String?
     @State private var urlImportError: String?
+    /// Entries the importer skipped, shown after an import and from the
+    /// toolbar while the active profile has any.
+    @State private var presentedWarnings: [ConfigWarning]?
+    /// Warnings of a URL install, shown once its sheet is gone (two sheets
+    /// cannot swap in one update).
+    @State private var pendingWarnings: [ConfigWarning]?
 
     var body: some View {
         Group {
@@ -60,6 +67,16 @@ struct ProfilesPane: View {
                     }
                     .disabled(selectedID == nil)
                     .help("Remove")
+                }
+            }
+            if !store.warnings.isEmpty {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Import Warnings", systemImage: "exclamationmark.triangle") {
+                        presentedWarnings = store.warnings
+                    }
+                    .labelStyle(.iconOnly)
+                    .foregroundStyle(.orange)
+                    .help("\(store.warnings.count) entries of the active profile were not imported")
                 }
             }
             ToolbarItem(placement: .primaryAction) {
@@ -118,7 +135,21 @@ struct ProfilesPane: View {
                 onDone: { errorMessage = nil }
             )
         }
-        .sheet(isPresented: $isURLPresented, onDismiss: { urlImportError = nil }) {
+        .sheet(isPresented: Binding(
+            get: { presentedWarnings != nil },
+            set: { if !$0 { presentedWarnings = nil } }
+        )) {
+            ImportWarningsSheet(warnings: presentedWarnings ?? []) {
+                presentedWarnings = nil
+            }
+        }
+        .sheet(isPresented: $isURLPresented, onDismiss: {
+            urlImportError = nil
+            if let pendingWarnings {
+                presentedWarnings = pendingWarnings
+                self.pendingWarnings = nil
+            }
+        }) {
             InstallFromURLSheet(
                 name: $urlName,
                 urlString: $urlString,
@@ -257,8 +288,9 @@ struct ProfilesPane: View {
 
     private func importFromFile() {
         do {
-            if let id = try ProfileFileIO.importFromOpenPanel(into: store) {
-                selectedID = id
+            if let result = try ProfileFileIO.importFromOpenPanel(into: store) {
+                selectedID = result.id
+                if !result.warnings.isEmpty { presentedWarnings = result.warnings }
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -280,32 +312,17 @@ struct ProfilesPane: View {
             urlImportError = "Enter a valid URL."
             return
         }
+        guard let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" else {
+            urlImportError = "Enter an http or https URL."
+            return
+        }
         isImportingURL = true
         defer { isImportingURL = false }
         do {
-            var request = URLRequest(url: url, timeoutInterval: 30)
-            let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
-            request.setValue("PrizmX/\(version)", forHTTPHeaderField: "User-Agent")
-            let (data, response) = try await URLSession.shared.data(for: request)
-            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                urlImportError = ProfileStoreError.subscriptionFailed(http.statusCode).localizedDescription
-                return
-            }
-            guard let text = ProfileStore.decodeSubscriptionBody(data), !text.isEmpty else {
-                urlImportError = ProfileStoreError.unreadableSubscription.localizedDescription
-                return
-            }
-            let name = urlName.trimmingCharacters(in: .whitespacesAndNewlines)
-            var profile = ProxyProfile(
-                name: name.isEmpty ? (url.host ?? "Subscription") : name,
-                subscriptionURL: url,
-                lastUpdated: Date(),
-                rawConfig: text
-            )
-            profile.applySubscriptionUserInfo(from: response)
-            try store.upsert(profile)
-            selectedID = profile.id
+            let warnings = try await store.installSubscription(from: url, name: urlName)
+            selectedID = store.profiles.last?.id
             urlImportError = nil
+            if !warnings.isEmpty { pendingWarnings = warnings }
             isURLPresented = false
         } catch {
             urlImportError = error.localizedDescription
@@ -356,7 +373,7 @@ private enum ProfileListFormat {
     }()
 }
 
-private enum ProfileFileIO {
+enum ProfileFileIO {
     static let emptyClashConfig = """
     proxies: []
     proxy-groups: []
@@ -364,7 +381,7 @@ private enum ProfileFileIO {
       - MATCH,DIRECT
     """
 
-    static func importFromOpenPanel(into store: ProfileStore) throws -> UUID? {
+    static func importFromOpenPanel(into store: ProfileStore) throws -> (id: UUID, warnings: [ConfigWarning])? {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
@@ -372,12 +389,7 @@ private enum ProfileFileIO {
         panel.title = "Import Profile"
         guard panel.runModal() == .OK, let url = panel.url else { return nil }
         let text = try String(contentsOf: url, encoding: .utf8)
-        let profile = ProxyProfile(
-            name: url.deletingPathExtension().lastPathComponent,
-            rawConfig: text
-        )
-        try store.upsert(profile)
-        return profile.id
+        return try store.importProfile(text: text, name: url.deletingPathExtension().lastPathComponent)
     }
 
     static func export(_ profile: ProxyProfile) throws {
@@ -400,6 +412,76 @@ private enum ProfileFileIO {
         if let yml = UTType(filenameExtension: "yml") { types.append(yml) }
         if let conf = UTType(filenameExtension: "conf") { types.append(conf) }
         return types
+    }
+}
+
+/// What the importer skipped, grouped by kind. Skipped rules let traffic
+/// fall through to later rules; skipped groups fail the rules that use them.
+private struct ImportWarningsSheet: View {
+    var warnings: [ConfigWarning]
+    var onDone: () -> Void
+
+    private static let order: [ConfigWarning.Kind] = [.group, .rule, .proxy, .dns]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Some Entries Were Not Imported").font(.headline)
+                Text(summary)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
+            List {
+                ForEach(Self.order, id: \.self) { kind in
+                    let items = warnings.filter { $0.kind == kind }
+                    if !items.isEmpty {
+                        Section("\(Self.title(kind)) (\(items.count))") {
+                            ForEach(Array(items.enumerated()), id: \.offset) { _, warning in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(warning.text)
+                                        .font(.body.monospaced())
+                                        .lineLimit(2)
+                                        .textSelection(.enabled)
+                                    Text(warning.reason)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(minHeight: 240)
+            SheetActionBar(doneTitle: "OK", onDone: onDone)
+        }
+        .frame(width: 560, height: 460)
+    }
+
+    private var summary: String {
+        let groups = warnings.filter { $0.kind == .group }.count
+        let rules = warnings.filter { $0.kind == .rule }.count
+        let proxies = warnings.filter { $0.kind == .proxy }.count
+        let dns = warnings.filter { $0.kind == .dns }.count
+        var parts: [String] = []
+        if groups > 0 { parts.append("\(groups) group(s)") }
+        if rules > 0 { parts.append("\(rules) rule(s)") }
+        if proxies > 0 { parts.append("\(proxies) proxy(ies)") }
+        if dns > 0 { parts.append("\(dns) DNS setting(s)") }
+        return "PrizmX skipped \(parts.joined(separator: ", ")) it does not support. "
+            + "Traffic that would match a skipped rule falls through to later rules; "
+            + "rules that use a skipped group fail instead of going direct."
+    }
+
+    private static func title(_ kind: ConfigWarning.Kind) -> String {
+        switch kind {
+        case .group: "Policy Groups"
+        case .rule: "Rules"
+        case .proxy: "Proxies"
+        case .dns: "DNS"
+        }
     }
 }
 
