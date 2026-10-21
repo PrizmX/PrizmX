@@ -211,7 +211,7 @@ struct SettingsPane: View {
 
             Section("Shortcuts") {
                 labeledShortcut("Select node", "⌘K")
-                labeledShortcut("Toggle VPN", "⌘.")
+                labeledShortcut("Toggle VPN", "⇧⌘T")
                 labeledShortcut("Inspector", "⌘I")
                 labeledShortcut("Main console", "⌘0")
                 labeledShortcut("Settings", "⌘,")

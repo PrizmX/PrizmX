@@ -149,7 +149,7 @@ struct AppCommands: Commands {
             Button(appModel.isVPNOn ? "Disconnect" : "Connect") {
                 appModel.tunModeEnabled.toggle()
             }
-            .keyboardShortcut(".", modifiers: .command)
+            .keyboardShortcut("t", modifiers: [.command, .shift])
 
             Button("Select Node…") {
                 appModel.presentNodePicker(using: openWindow)

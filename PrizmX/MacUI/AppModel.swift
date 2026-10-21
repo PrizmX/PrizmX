@@ -1177,22 +1177,23 @@ extension AppModel {
         }
     }
 
-    /// Local (app-active) shortcuts so Menu Bar Only still receives ⌘K / ⌘.
+    /// Local (app-active) shortcuts so Menu Bar Only still receives ⌘K / ⇧⌘T.
+    /// ⌘. is left to the system: it cancels dialogs.
     nonisolated private static func handleLocalKey(_ event: NSEvent) -> NSEvent? {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         guard flags.contains(.command),
-              !flags.contains(.shift),
               !flags.contains(.option),
               !flags.contains(.control)
         else { return event }
 
         if isEditingText { return event }
 
-        switch event.charactersIgnoringModifiers {
-        case "k":
+        // Shift turns `charactersIgnoringModifiers` uppercase.
+        switch (event.charactersIgnoringModifiers?.lowercased(), flags.contains(.shift)) {
+        case ("k", false):
             NotificationCenter.default.post(name: AppEvent.presentNodePicker, object: nil)
             return nil
-        case ".":
+        case ("t", true):
             NotificationCenter.default.post(name: AppEvent.toggleVPN, object: nil)
             return nil
         default:
