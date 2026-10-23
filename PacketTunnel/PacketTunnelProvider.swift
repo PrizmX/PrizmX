@@ -17,8 +17,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private static let tunnelMTU: NSNumber = 1400
 
     /// Mutable tunnel state. NE calls (`handleAppMessage`, `stopTunnel`,
-    /// `wake`) arrive on the provider queue while the path monitor and
-    /// start/stop Tasks run elsewhere, so every access goes through `shared`.
+    /// `sleep`, `wake`) arrive on the provider queue while the path monitor
+    /// and start/stop Tasks run elsewhere, so every access goes through
+    /// `shared`.
     private struct SharedState {
         var stack: TUNStack?
         var engine: Engine?
@@ -28,6 +29,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         var pathRefreshTask: Task<Void, Never>?
         var metricsTask: Task<Void, Never>?
         var lastPathFingerprint: String?
+        /// The `Egress` last seen, and whether a change since the open flows
+        /// were last reset left them on a network that is gone.
+        var lastEgress: Egress?
+        var egressChanged = false
+        /// When the system last went to sleep, for `wake` to tell a real
+        /// sleep from a brief one.
+        var sleptAt: ContinuousClock.Instant?
         var useFakeIP = true
         /// "Route All Traffic" as configured, which a reload compares against.
         var captureAllConfigured = false
@@ -406,9 +414,28 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
+    /// A sleep at least this long resets the open flows on wake.
+    private static let resetAfterSleep: Duration = .seconds(60)
+
+    override func sleep(completionHandler: @escaping () -> Void) {
+        shared.withLockUnchecked { $0.sleptAt = ContinuousClock.now }
+        completionHandler()
+    }
+
     override func wake() {
+        let slept = shared.withLockUnchecked { state -> Duration? in
+            defer { state.sleptAt = nil }
+            return state.sleptAt.map { ContinuousClock.now - $0 }
+        }
+        let reason = slept.map { "wake after \($0.components.seconds)s" } ?? "wake"
+        // Flows idle through a real sleep may be dead (NAT or server
+        // timeouts). A brief one, such as the nap between maintenance (dark)
+        // wakes, which call this too, leaves them: a reset would only cut
+        // what apps just opened.
+        let resets = slept.map { $0 >= Self.resetAfterSleep } ?? true
         Task { [weak self] in
-            await self?.refreshAfterPathChange(reason: "wake")
+            await self?.refreshAfterPathChange(reason: reason)
+            if resets { await self?.resetFlows(reason: reason) }
         }
     }
 
@@ -550,9 +577,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private func notePath(_ path: Network.NWPath) async {
         let fingerprint = Self.pathFingerprint(path)
+        let egress = Egress(path)
         let changed = shared.withLockUnchecked { state -> Bool in
-            if fingerprint == state.lastPathFingerprint { return false }
             let isFirst = state.lastPathFingerprint == nil
+            let egressMoved = state.lastEgress.map { egress.strands(flowsOn: $0) } ?? false
+            if egressMoved { state.egressChanged = true }
+            state.lastEgress = egress
+            if fingerprint == state.lastPathFingerprint, !egressMoved { return false }
             state.lastPathFingerprint = fingerprint
             return !isFirst
         }
@@ -561,6 +592,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
             await self?.refreshAfterPathChange(reason: "path \(fingerprint)")
+            await self?.resetFlows(reason: "network changed", onlyIfEgressChanged: true)
         }
         let previous = shared.withLockUnchecked { state -> Task<Void, Never>? in
             let old = state.pathRefreshTask
@@ -599,15 +631,58 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
+    /// Resets the open flows so apps reconnect over the current network.
+    /// Their sockets sit on the utun, whose address never changes, so they
+    /// would keep waiting on outbounds the old network left behind.
+    /// `onlyIfEgressChanged`: only when the network flows leave by changed.
+    private func resetFlows(reason: String, onlyIfEgressChanged: Bool = false) async {
+        let due = shared.withLockUnchecked { state -> Bool in
+            defer { state.egressChanged = false }
+            return state.egressChanged || !onlyIfEgressChanged
+        }
+        guard due, let stack else { return }
+        let reset = await stack.resetFlows()
+        TunnelLog.write(.info, "reset \(reset.tcp) TCP and \(reset.udp) UDP flows (\(reason))")
+        log.info("reset \(reset.tcp) TCP and \(reset.udp) UDP flows (\(reason, privacy: .public))")
+    }
+
     /// Ignore utun so bringing the tunnel up is not itself a "network change".
     private static func pathFingerprint(_ path: Network.NWPath) -> String {
         let interfaces = path.availableInterfaces
             .map(\.name)
-            .filter { !$0.hasPrefix("utun") && !$0.hasPrefix("ipsec") }
+            .filter { !isTunnelInterface($0) }
             .sorted()
             .joined(separator: ",")
         let gateways = path.gateways.map { "\($0)" }.sorted().joined(separator: ",")
         return "\(path.status)|exp=\(path.isExpensive)|if=\(interfaces)|gw=\(gateways)"
+    }
+
+    /// What open flows leave by: the path's status, the preferred
+    /// interface and the gateways.
+    private struct Egress {
+        let status: String
+        let interface: String?
+        let gateways: Set<String>
+
+        init(_ path: Network.NWPath) {
+            status = "\(path.status)"
+            interface = path.availableInterfaces
+                .first { !PacketTunnelProvider.isTunnelInterface($0.name) }?.name
+            gateways = Set(path.gateways.map { "\($0)" })
+        }
+
+        /// Whether flows opened on `old` may now sit on a network that is
+        /// gone: the status or the preferred interface changed, or a gateway
+        /// went away. Another interface coming or going, or a gateway only
+        /// added (the IPv6 router advertising after DHCP), leaves them
+        /// working, so it refreshes DNS but resets nothing.
+        func strands(flowsOn old: Egress) -> Bool {
+            status != old.status || interface != old.interface || !gateways.isSuperset(of: old.gateways)
+        }
+    }
+
+    private static func isTunnelInterface(_ name: String) -> Bool {
+        name.hasPrefix("utun") || name.hasPrefix("ipsec")
     }
 
     // MARK: - Packet pump
