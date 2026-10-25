@@ -77,8 +77,9 @@ final class NetworkLinkMonitor: NSObject, CLLocationManagerDelegate {
     }
 
     private func refreshTitle() {
-        let snapshot = Self.snapshot(for: latestPath ?? monitor.currentPath)
-        let ip = Self.primaryIPv4() ?? "—"
+        let path = latestPath ?? monitor.currentPath
+        let snapshot = Self.snapshot(for: path)
+        let ip = Self.primaryIPv4(path: path) ?? "—"
         let changed = snapshot.title != title || snapshot.kind != kind || ip != lanIPv4
         title = snapshot.title
         kind = snapshot.kind
@@ -100,7 +101,7 @@ final class NetworkLinkMonitor: NSObject, CLLocationManagerDelegate {
 
     nonisolated private static func snapshot(for path: NWPath) -> (title: String, kind: NetworkLinkKind) {
         guard path.status == .satisfied else { return ("Offline", .offline) }
-        let bsd = primaryBSDName() ?? path.availableInterfaces.first?.name
+        let bsd = primaryBSDName(path: path)
         let nicName = bsd.flatMap(localizedName(forBSD:))
         let kind = kind(for: path, localizedName: nicName)
         if kind == .hotspot {
@@ -140,8 +141,8 @@ final class NetworkLinkMonitor: NSObject, CLLocationManagerDelegate {
     }
 
     /// IPv4 of the primary interface (`State:/Network/Interface/<bsd>/IPv4`).
-    nonisolated private static func primaryIPv4() -> String? {
-        guard let bsd = primaryBSDName(),
+    nonisolated private static func primaryIPv4(path: NWPath) -> String? {
+        guard let bsd = primaryBSDName(path: path),
               let store = SCDynamicStoreCreate(nil, "PrizmX.NetworkLink" as CFString, nil, nil),
               let info = SCDynamicStoreCopyValue(
                 store,
@@ -152,8 +153,21 @@ final class NetworkLinkMonitor: NSObject, CLLocationManagerDelegate {
         return addresses.first { !$0.isEmpty }
     }
 
-    /// `State:/Network/Global/IPv4` PrimaryInterface (en0, en1, …).
-    nonisolated private static func primaryBSDName() -> String? {
+    /// The interface traffic leaves by (en0, en1, …), never a tunnel. With
+    /// Route All Traffic the system's primary interface is PrizmX's own utun,
+    /// whose 198.18.0.1 is the FakeIP gateway, so then the path's first
+    /// physical interface stands in.
+    nonisolated private static func primaryBSDName(path: NWPath) -> String? {
+        if let bsd = systemPrimaryBSDName(), !isTunnel(bsd) { return bsd }
+        return path.availableInterfaces.first { !isTunnel($0.name) }?.name
+    }
+
+    nonisolated private static func isTunnel(_ bsd: String) -> Bool {
+        bsd.hasPrefix("utun") || bsd.hasPrefix("ipsec")
+    }
+
+    /// `State:/Network/Global/IPv4` PrimaryInterface.
+    nonisolated private static func systemPrimaryBSDName() -> String? {
         guard let store = SCDynamicStoreCreate(nil, "PrizmX.NetworkLink" as CFString, nil, nil) else {
             return nil
         }
