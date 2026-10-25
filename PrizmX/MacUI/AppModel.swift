@@ -469,16 +469,9 @@ final class AppModel {
             nodeList = NodeListViewModel(profiles: profiles)
             menuBarOnly = UserDefaults.standard.bool(forKey: DefaultsKey.menuBarOnly)
             systemProxyEnabled = UserDefaults.standard.bool(forKey: DefaultsKey.systemProxyEnabled)
-            // New users start with TUN off: it needs the system extension
-            // approved, which must not be the first thing they see. Earlier
-            // builds defaulted it on and stored it only once toggled, so a
-            // user who already has profiles keeps it on.
-            let storedTUN = UserDefaults.standard.object(forKey: DefaultsKey.tunModeEnabled) as? Bool
-            let tunDefault = storedTUN ?? !profiles.profiles.isEmpty
-            tunModeEnabled = tunDefault
-            if storedTUN == nil {
-                UserDefaults.standard.set(tunDefault, forKey: DefaultsKey.tunModeEnabled)
-            }
+            // TUN starts off: it needs the system extension approved, which
+            // must not be the first thing a new user sees.
+            tunModeEnabled = UserDefaults.standard.bool(forKey: DefaultsKey.tunModeEnabled)
             allowLANEnabled = UserDefaults.standard.bool(forKey: DefaultsKey.allowLANEnabled)
             menuBarConnectedStyle = MenuBarConnectedStyle(
                 rawValue: UserDefaults.standard.string(forKey: DefaultsKey.menuBarConnectedStyle) ?? ""
