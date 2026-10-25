@@ -457,7 +457,8 @@ final class AppModel {
             // App Group container.
             TunnelLog.bind(kitRoot: TunnelRuntimeStore.runtimeKitRoot())
             // Open-core Developer ID system extension: sendProviderMessage is
-            // unreliable. iOS / Pro leave the Kit default (.providerMessage).
+            // unreliable, so ask it over XPC. iOS / Pro leave the Kit default
+            // (.providerMessage).
             VPNManager.metricsChannel = .xpc
             let profiles = ProfileStore()
             dashboard = DashboardViewModel(

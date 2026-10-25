@@ -52,7 +52,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         var systemDNS: [String] = []
         var ipv6FakeIP = false
         /// The app's mixed-port listeners and the table reader that finds
-        /// their clients for `ProxyClientStore`.
+        /// their clients when the app asks over XPC.
         var attributor: ProcessFlowAttributor?
         var proxyListenPorts: Set<UInt16> = []
         /// A config reload is building its engine.
@@ -468,9 +468,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     /// Answers the app's metrics requests over XPC from the last snapshot.
     private func startXPCHost() {
-        let host = TunnelXPCHost { [lastMetrics] in
-            try? JSONEncoder().encode(lastMetrics.withLock { $0 })
-        }
+        let host = TunnelXPCHost(
+            metrics: { [lastMetrics] in try? JSONEncoder().encode(lastMetrics.withLock { $0 }) },
+            proxyClients: { [weak self] in self?.proxyClientsJSON() }
+        )
         host.start()
         let previous = shared.withLockUnchecked { state -> TunnelXPCHost? in
             let old = state.xpcHost
@@ -480,8 +481,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         previous?.stop()
     }
 
-    /// Writes counters to the kit every 1s. Do not also `snapshot()` from
-    /// `handleAppMessage` — that call resets the rate window.
+    /// Takes the counters every 1s for the app to fetch. Do not also
+    /// `snapshot()` from `handleAppMessage` — that call resets the rate window.
     private func startMetricsDump() {
         publishMetrics()
         let task = Task { [weak self] in
@@ -507,8 +508,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         task?.cancel()
         lastMetrics.withLock { $0 = .zero }
-        TunnelMetricsStore.clear()
-        ProxyClientStore.clear()
     }
 
     private func publishMetrics() {
@@ -516,10 +515,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         // The app shows which member each url-test / fallback group uses.
         snapshot.groupSelections = engine?.nodeManager.autoSelections() ?? [:]
         lastMetrics.withLock { $0 = snapshot }
-        if !TunnelMetricsStore.save(snapshot) {
-            TunnelLog.write(.error, "metrics file write failed")
-        }
-        publishProxyClients()
         breakEgressLoops()
     }
 
@@ -553,16 +548,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         Task { await self.refreshAfterPathChange(reason: "egress loop") }
     }
 
-    /// Root sees every socket; the app attributes the mixed-port
-    /// flows it could not place from this file. Written even when empty, so
-    /// the app can tell a missing client from a tunnel that is not publishing.
-    private func publishProxyClients() {
+    /// Root sees every socket; the app attributes the mixed-port flows it
+    /// could not place from this. The table is read when the app asks, so
+    /// every socket opened before the request is listed if it is still alive
+    /// (the app relies on it). An empty list is an answer: no such client.
+    private func proxyClientsJSON() -> Data? {
         let (attributor, ports) = shared.withLockUnchecked { ($0.attributor, $0.proxyListenPorts) }
-        guard let attributor else { return }
-        // Stamped before the table read: every socket opened before this
-        // instant is in the list if it is still alive (the app relies on it).
-        let readAt = Date().timeIntervalSince1970
-        ProxyClientStore.save(attributor.loopbackClients(listenPorts: ports), writtenAt: readAt)
+        guard let attributor else { return nil }
+        return try? JSONEncoder().encode(attributor.loopbackClients(listenPorts: ports))
     }
 
     private func reply(

@@ -7,9 +7,11 @@ import PrizmXProtocols
 final class TunnelXPCHost: NSObject, NSXPCListenerDelegate, TunnelXPCService, @unchecked Sendable {
     private let listener = NSXPCListener(machServiceName: TunnelXPC.machServiceName)
     private let metrics: @Sendable () -> Data?
+    private let proxyClients: @Sendable () -> Data?
 
-    init(metrics: @escaping @Sendable () -> Data?) {
+    init(metrics: @escaping @Sendable () -> Data?, proxyClients: @escaping @Sendable () -> Data?) {
         self.metrics = metrics
+        self.proxyClients = proxyClients
         super.init()
     }
 
@@ -40,5 +42,9 @@ final class TunnelXPCHost: NSObject, NSXPCListenerDelegate, TunnelXPCService, @u
 
     func fetchMetrics(reply: @escaping (Data?) -> Void) {
         reply(metrics())
+    }
+
+    func fetchProxyClients(reply: @escaping (Data?) -> Void) {
+        reply(proxyClients())
     }
 }
