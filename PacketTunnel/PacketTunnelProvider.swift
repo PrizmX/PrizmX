@@ -189,7 +189,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         )
         if boot.configText == nil {
             log.error("config missing — outbound will be DIRECT-only")
-            TunnelLog.write(.error, "config missing — extension cannot read staged kit; outbound will be DIRECT-only")
+            TunnelLog.write(.error, "config missing — extension cannot read the kit; outbound will be DIRECT-only")
         }
 
         let attributor = ProcessFlowAttributor()
@@ -275,7 +275,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             let engine = self.engine
             do {
                 try engine?.nodeManager.select(nodeID: nodeID, inGroup: group)
-                PolicySelectionStore.set(nodeID, inGroup: group)
                 engine?.applyGlobalGroup(group)
                 TunnelLog.write(.info, "select \(group) → \(nodeID)")
                 completionHandler?(try? TunnelIPC.encode(.success()))
@@ -289,7 +288,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 return
             }
             engine?.setOutboundMode(mode, globalGroup: request.groupName)
-            OutboundModeStore.save(mode: mode, globalGroup: request.groupName)
             completionHandler?(try? TunnelIPC.encode(.success()))
         case .setCaptureMode:
             let (fakeIP, captureAll, captureIPv6) = shared.withLockUnchecked { state -> (Bool, Bool, Bool) in
@@ -537,7 +535,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         Task { await self.refreshAfterPathChange(reason: "egress loop") }
     }
 
-    /// Root sees every socket; the sandboxed app attributes the mixed-port
+    /// Root sees every socket; the app attributes the mixed-port
     /// flows it could not place from this file. Written even when empty, so
     /// the app can tell a missing client from a tunnel that is not publishing.
     private func publishProxyClients() {

@@ -2,6 +2,8 @@ import AppKit
 import Foundation
 import Observation
 import SwiftUI
+import PrizmXConfig
+import PrizmXProtocols
 import PrizmXServices
 import PrizmXUIEngine
 
@@ -451,6 +453,9 @@ final class AppModel {
                 "com.apple.Music": 2_400
             ]
         } else {
+            // One kit for the app and the root tunnel, which cannot read an
+            // App Group container.
+            TunnelLog.bind(kitRoot: TunnelRuntimeStore.runtimeKitRoot())
             // Open-core Developer ID system extension: sendProviderMessage is
             // unreliable. iOS / Pro leave the Kit default (.providerMessage).
             VPNManager.metricsChannel = .kitFile
