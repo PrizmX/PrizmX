@@ -1,6 +1,6 @@
 # Sibling repositories pinned for CI and release builds.
 # Format: <repo>=<full commit SHA>. Regenerate with
 # scripts/update_dependencies_lock.sh; do not edit by hand.
-PrizmX-Foundation=7d96e03d18a0a85ed72a50f2de8a8108cd6dead9
+PrizmX-Foundation=a83c24353148e7ab05f5ef62d9796c478cbd0508
 PrizmX-Kit=a2cf17b8783eedf3921b692ed9342aff7a649625
 SwiftTCP=9d3b7ab5eebe9fdc8f705d7b51fe3b09bc898d5f
