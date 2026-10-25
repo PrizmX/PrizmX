@@ -14,7 +14,7 @@ struct HomePane: View {
     @State private var unit = WidgetGrid.minUnit
     @State private var boardWidth = WidgetGrid.boardWidth(unit: WidgetGrid.minUnit)
     @State private var widthSettleTask: Task<Void, Never>?
-    @AppStorage("homeTrafficPeriod") private var trafficPeriodRaw = TrafficPeriod.day.rawValue
+    @AppStorage("homeTrafficScope") private var trafficScopeRaw = TrafficScope.today.rawValue
     @AppStorage("homeTrafficRankScope") private var rankScopeRaw = TrafficRankScope.app.rawValue
     @AppStorage("homeDidShowReorderTip") private var didShowReorderTip = false
     @State private var showsEgressInfo = false
@@ -427,13 +427,32 @@ struct HomePane: View {
 
     // MARK: - Traffic / Ranking
 
+    /// The ledger is kept in memory only, so the card offers today and
+    /// everything since the app launched, not the month.
+    private enum TrafficScope: String, CaseIterable {
+        case today
+        case session
+
+        var title: String {
+            switch self {
+            case .today: "Today"
+            case .session: "Since Launch"
+            }
+        }
+    }
+
     private var trafficWidget: some View {
-        let period = TrafficPeriod(rawValue: trafficPeriodRaw) ?? .day
-        let totals = held("traffic.\(period.rawValue)") { appModel.trafficLedger.totals(for: period) }
+        let scope = TrafficScope(rawValue: trafficScopeRaw) ?? .today
+        let totals = held("traffic.\(scope.rawValue)") {
+            switch scope {
+            case .today: appModel.trafficLedger.totals(for: .day)
+            case .session: appModel.trafficLedger.sessionTotals()
+            }
+        }
         return TrafficCard(totals: totals) {
             AppSegmentedControl(
-                options: TrafficPeriod.allCases.map { ($0.rawValue, $0.title) },
-                selection: $trafficPeriodRaw,
+                options: TrafficScope.allCases.map { ($0.rawValue, $0.title) },
+                selection: $trafficScopeRaw,
                 size: .small
             )
         }

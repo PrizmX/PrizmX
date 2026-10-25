@@ -406,8 +406,6 @@ final class AppModel {
     nonisolated(unsafe) var egressRefreshTask: Task<Void, Never>?
     @ObservationIgnored
     nonisolated(unsafe) private var terminateObserver: NSObjectProtocol?
-    @ObservationIgnored
-    nonisolated(unsafe) private var sleepObserver: NSObjectProtocol?
     /// Set by `clearDNSCache` / a subscription refresh; the next takeover
     /// clears the node DNS cache once the engines are down.
     @ObservationIgnored
@@ -486,7 +484,9 @@ final class AppModel {
             if dashboard.status == .connected {
                 sessionStartedAt = Date()
             }
-            trafficLedger = TrafficLedger()
+            // Like Clash: traffic stats live in memory and reset when the app
+            // quits, so nothing is rewritten on disk while traffic flows.
+            trafficLedger = TrafficLedger(fileURL: nil)
             scripts = ScriptStore()
         }
         // Assignments in init skip didSet.
@@ -508,15 +508,6 @@ final class AppModel {
             queue: .main
         ) { [weak self] _ in
             self?.mixedPortRuntime.shutdown()
-            MainActor.assumeIsolated { self?.trafficLedger.flush() }
-        }
-        // Ledger writes are throttled; sleep may end in a quit or power loss.
-        sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.willSleepNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.trafficLedger.flush() }
         }
         // Follow external VPN changes (System Settings toggle) so the app's
         // TUN switch never fights the real session state.
@@ -563,9 +554,6 @@ final class AppModel {
         }
         if let terminateObserver {
             NotificationCenter.default.removeObserver(terminateObserver)
-        }
-        if let sleepObserver {
-            NSWorkspace.shared.notificationCenter.removeObserver(sleepObserver)
         }
         for observer in uiVisibilityObservers {
             NotificationCenter.default.removeObserver(observer)
