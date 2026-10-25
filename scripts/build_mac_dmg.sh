@@ -2,8 +2,9 @@
 set -euo pipefail
 
 # Open-core macOS DMG: signed + notarized.
-# The host app stays sandboxed. The Packet Tunnel system extension does not:
-# it runs as root and must read the user App Group (config, pins, logs).
+# Neither the host app nor the Packet Tunnel system extension is sandboxed:
+# the app reads process and hosts data itself, and the extension runs as root
+# and must read the user's kit (config, pins, logs).
 # Run from anywhere; script lives in the PrizmX app repo.
 #
 # Usage:
@@ -301,8 +302,7 @@ dump_profiles() {
 }
 
 # ============================================================
-# Build. Do not pass ENABLE_APP_SANDBOX=NO — that would unsandbox the host app.
-# Packet Tunnel sandbox is off via its target / entitlements file.
+# Build. The sandbox is off in both targets' build settings and entitlements.
 # ============================================================
 
 echo "▶ Archiving $APP_NAME $VERSION ($BUILD_NUMBER)…"
@@ -406,15 +406,15 @@ sign_item "$APP_PATH" "$APP_ENTITLEMENTS"
 
 echo "▶ Verifying code signature…"
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-echo "▶ Entitlements (app sandboxed, tunnel not):"
+echo "▶ Entitlements (neither sandboxed):"
 APP_ENTS="$(codesign -d --entitlements :- "$APP_PATH" 2>/dev/null || true)"
 TUN_ENTS="$(codesign -d --entitlements :- "$SYSEX_PATH" 2>/dev/null || true)"
 echo "$APP_ENTS" | grep -E "app-sandbox|networkextension" || true
 echo "$TUN_ENTS" | grep -E "app-sandbox|networkextension" || true
-echo "$APP_ENTS" | grep -q "app-sandbox" || {
-  echo "❌ Host app lost app-sandbox"
+if echo "$APP_ENTS" | grep -q "app-sandbox"; then
+  echo "❌ Host app must not be sandboxed (reads process and hosts data itself)"
   exit 1
-}
+fi
 if echo "$TUN_ENTS" | grep -q "app-sandbox"; then
   echo "❌ Packet Tunnel must not be sandboxed (cannot read user App Group)"
   exit 1

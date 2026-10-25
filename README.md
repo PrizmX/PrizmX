@@ -1,6 +1,6 @@
 # PrizmX
 
-Open-core **macOS** proxy client. It reads Clash YAML / sing-box style configs, runs a sandboxed host app plus a Packet Tunnel **system extension**, and can take over traffic with FakeIP TUN and/or System Proxy (mixed-port HTTP CONNECT + SOCKS5).
+Open-core **macOS** proxy client. It reads Clash YAML / sing-box style configs, runs a host app (not sandboxed) plus a Packet Tunnel **system extension**, and can take over traffic with FakeIP TUN and/or System Proxy (mixed-port HTTP CONNECT + SOCKS5).
 
 This repository is the **community Mac app** (`app.prizmx.macos`). It is not the Mac App Store / Pro product (`app.prizmx`).
 
