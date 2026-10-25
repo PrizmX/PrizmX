@@ -20,6 +20,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>NetworkExtension</key>
 	<dict>
+		<key>NEMachServiceName</key>
+		<string>N49M3Z72D3.group.app.prizmx.xpc</string>
 		<key>NEProviderClasses</key>
 		<dict>
 			<key>com.apple.networkextension.packet-tunnel</key>

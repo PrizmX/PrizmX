@@ -458,7 +458,7 @@ final class AppModel {
             TunnelLog.bind(kitRoot: TunnelRuntimeStore.runtimeKitRoot())
             // Open-core Developer ID system extension: sendProviderMessage is
             // unreliable. iOS / Pro leave the Kit default (.providerMessage).
-            VPNManager.metricsChannel = .kitFile
+            VPNManager.metricsChannel = .xpc
             let profiles = ProfileStore()
             dashboard = DashboardViewModel(
                 vpn: PrizmXServices.VPNManager.shared,

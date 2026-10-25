@@ -28,6 +28,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         var pathMonitor: Network.NWPathMonitor?
         var pathRefreshTask: Task<Void, Never>?
         var metricsTask: Task<Void, Never>?
+        var xpcHost: TunnelXPCHost?
         var lastPathFingerprint: String?
         /// The `Egress` last seen, and whether a change since the open flows
         /// were last reset left them on a network that is gone.
@@ -257,6 +258,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         log.info("tunnel started fakeIP=\(useFakeIP, privacy: .public) (SwiftTCP)")
         TunnelLifecycleStore.markStarted()
         startMetricsDump()
+        startXPCHost()
     }
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)? = nil) {
@@ -447,12 +449,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             state.engine = nil
             state.stack = nil
             state.attributor = nil
+            state.xpcHost = nil
             return snapshot
         }
         currentEngine.set(nil)
         taken.pathMonitor?.cancel()
         taken.pathRefreshTask?.cancel()
         stopMetricsDump()
+        taken.xpcHost?.stop()
         taken.pumpTask?.cancel()
         taken.relayTask?.cancel()
         taken.engine?.stopURLTest()
@@ -460,6 +464,20 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         TunnelEgress.avoid(nil)
         TunnelLog.write(.info, "tunnel stopped")
         log.info("tunnel stopped")
+    }
+
+    /// Answers the app's metrics requests over XPC from the last snapshot.
+    private func startXPCHost() {
+        let host = TunnelXPCHost { [lastMetrics] in
+            try? JSONEncoder().encode(lastMetrics.withLock { $0 })
+        }
+        host.start()
+        let previous = shared.withLockUnchecked { state -> TunnelXPCHost? in
+            let old = state.xpcHost
+            state.xpcHost = host
+            return old
+        }
+        previous?.stop()
     }
 
     /// Writes counters to the kit every 1s. Do not also `snapshot()` from
