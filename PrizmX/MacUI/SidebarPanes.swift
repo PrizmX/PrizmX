@@ -151,6 +151,7 @@ struct SettingsPane: View {
         Form {
             Section("General") {
                 LaunchAtLoginToggle()
+                ProxyHelperRow()
                 Toggle(isOn: $appModel.menuBarOnly) {
                     Text("Menu Bar Only")
                     Text("Hide the Dock icon and keep PrizmX in the menu bar.")

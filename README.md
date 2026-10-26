@@ -47,6 +47,8 @@ SwiftTCP/
 | --- | --- |
 | `PrizmX/` | Host app |
 | `PacketTunnel/` | System extension |
+| `PrizmXHelper/` | Privileged helper: writes System Proxy settings as root |
+| `LaunchDaemons/` | The helper's launchd plist (`SMAppService.daemon`) |
 | `scripts/build_mac_dmg.sh` | Signed + notarized DMG |
 
 ## Develop
@@ -57,6 +59,7 @@ Requirements: recent Xcode, macOS 14+.
 2. Open `PrizmX.xcodeproj`, scheme **PrizmX**.
 3. Run. The Debug scheme **installs to `/Applications/PrizmX.app`** and launches that copy. System extensions cannot load from DerivedData.
 4. Enable **PrizmX Tunnel** in System Settings → General → Login Items & Extensions → Network Extensions.
+5. Turning on System Proxy registers the helper; allow **PrizmX** under Login Items & Extensions → Allow in the Background once. Until then each launch asks for an administrator password the first time System Proxy changes.
 
 Debug and a DMG install share the same bundle IDs. Do not Run from Xcode and use a notarized copy at the same time — they overwrite `/Applications` and replace the system extension.
 
@@ -80,6 +83,7 @@ Sign **inside-out** (system extension, then host). Do not `codesign --deep`.
 | --- | --- |
 | App | `app.prizmx.macos` |
 | Tunnel | `app.prizmx.macos.packet-tunnel` |
+| Helper | `app.prizmx.macos.helper` |
 | App Group | `N49M3Z72D3.group.app.prizmx` |
 
 ## License
