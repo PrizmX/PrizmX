@@ -972,6 +972,9 @@ final class AppModel {
     /// System Proxy / Allow LAN → mixed-port in this process, or off.
     private func applyMixedPort(config: String, overlay: ProfileOverlay) async {
         refreshInboundListen()
+        if systemProxyEnabled {
+            ProxyHelperSetup.prepare()
+        }
         if systemProxyEnabled || allowLANEnabled {
             do {
                 // The runtime drops superseded requests and restores the

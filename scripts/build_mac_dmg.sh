@@ -25,8 +25,8 @@ set -euo pipefail
 # VERSION: first argument, or TAG_VERSION / GITHUB_REF_NAME (leading "v" stripped)
 #
 # Layout: the app repo, PrizmX-Foundation, PrizmX-Kit, and SwiftTCP must be
-# siblings (local workspace or CI checkouts). Packet Tunnel is signed inside-out;
-# do not use codesign --deep.
+# siblings (local workspace or CI checkouts). Packet Tunnel and the privileged
+# helper are signed inside-out; do not use codesign --deep.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -366,12 +366,16 @@ profile_path_for_uuid() {
 sign_item() {
   local path="$1"
   local entitlements="${2:-}"
+  local identifier="${3:-}"
   local args=(--force --options runtime --timestamp --sign "$CERT_NAME")
   if [ -n "${SIGNING_KEYCHAIN:-}" ]; then
     args+=(--keychain "$SIGNING_KEYCHAIN")
   fi
   if [ -n "$entitlements" ]; then
     args+=(--entitlements "$entitlements")
+  fi
+  if [ -n "$identifier" ]; then
+    args+=(--identifier "$identifier")
   fi
   codesign "${args[@]}" "$path"
 }
@@ -400,6 +404,19 @@ cp "$TUNNEL_PROFILE_FILE" "$SYSEX_PATH/Contents/embedded.provisionprofile"
 
 echo "▶ Signing Packet Tunnel system extension…"
 sign_item "$SYSEX_PATH" "$TUNNEL_ENTITLEMENTS"
+
+# Privileged helper (launchd daemon registered through SMAppService). Its
+# identifier is what ProxyHelperXPC.helperRequirement checks.
+HELPER_PATH="$APP_PATH/Contents/MacOS/PrizmXHelper"
+HELPER_PLIST="$APP_PATH/Contents/Library/LaunchDaemons/app.prizmx.macos.helper.plist"
+if [ ! -f "$HELPER_PATH" ] || [ ! -f "$HELPER_PLIST" ]; then
+  echo "❌ Privileged helper missing:"
+  echo "   $HELPER_PATH"
+  echo "   $HELPER_PLIST"
+  exit 1
+fi
+echo "▶ Signing privileged helper…"
+sign_item "$HELPER_PATH" "" "app.prizmx.macos.helper"
 
 echo "▶ Signing main App bundle…"
 sign_item "$APP_PATH" "$APP_ENTITLEMENTS"

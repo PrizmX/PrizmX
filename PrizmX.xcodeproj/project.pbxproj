@@ -16,6 +16,9 @@
 		5B7A1105304B1001000A05 /* PrizmXUIComponents in Frameworks */ = {isa = PBXBuildFile; productRef = 5B7A1103304B1001000A03 /* PrizmXUIComponents */; };
 		5BA11A01305C0101000C01 /* PrizmXAttribution in Frameworks */ = {isa = PBXBuildFile; productRef = 5BA11A02305C0101000C02 /* PrizmXAttribution */; };
 		5BC0A003306A0001000A0003 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = 5BC0A002306A0001000A0002 /* PostHog */; };
+		5BD1E003306B0001000A0003 /* PrizmXHelper in Embed Helper */ = {isa = PBXBuildFile; fileRef = 5BD1E001306B0001000A0001 /* PrizmXHelper */; };
+		5BD1E004306B0001000A0004 /* app.prizmx.macos.helper.plist in Embed Launch Daemon */ = {isa = PBXBuildFile; fileRef = 5BD1E002306B0001000A0002 /* app.prizmx.macos.helper.plist */; };
+		5BD1E005306B0001000A0005 /* PrizmXProxyHelper in Frameworks */ = {isa = PBXBuildFile; productRef = 5BD1E00F306B0001000A000F /* PrizmXProxyHelper */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -25,6 +28,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 5B6040B5303FEE1400F6C706;
 			remoteInfo = PacketTunnel;
+		};
+		5BD1E010306B0001000A0010 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5B604092303FEE1300F6C632 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5BD1E009306B0001000A0009;
+			remoteInfo = PrizmXHelper;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -40,11 +50,35 @@
 			name = "Embed System Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		5BD1E006306B0001000A0006 /* Embed Helper */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 6;
+			files = (
+				5BD1E003306B0001000A0003 /* PrizmXHelper in Embed Helper */,
+			);
+			name = "Embed Helper";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5BD1E007306B0001000A0007 /* Embed Launch Daemon */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Library/LaunchDaemons;
+			dstSubfolderSpec = 1;
+			files = (
+				5BD1E004306B0001000A0004 /* app.prizmx.macos.helper.plist in Embed Launch Daemon */,
+			);
+			name = "Embed Launch Daemon";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		5B60409A303FEE1300F6C632 /* PrizmX.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PrizmX.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5B6040B0303FEE1400F6C701 /* app.prizmx.macos.packet-tunnel.systemextension */ = {isa = PBXFileReference; explicitFileType = "wrapper.system-extension"; includeInIndex = 0; path = "app.prizmx.macos.packet-tunnel.systemextension"; sourceTree = BUILT_PRODUCTS_DIR; };
+		5BD1E001306B0001000A0001 /* PrizmXHelper */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = PrizmXHelper; sourceTree = BUILT_PRODUCTS_DIR; };
+		5BD1E002306B0001000A0002 /* app.prizmx.macos.helper.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = app.prizmx.macos.helper.plist; path = LaunchDaemons/app.prizmx.macos.helper.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -69,6 +103,11 @@
 				5B6040C3303FEE1400F6C714 /* Exceptions for "PacketTunnel" folder in "PacketTunnel" target */,
 			);
 			path = PacketTunnel;
+			sourceTree = "<group>";
+		};
+		5BD1E008306B0001000A0008 /* PrizmXHelper */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PrizmXHelper;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -96,6 +135,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		5BD1E00B306B0001000A000B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5BD1E005306B0001000A0005 /* PrizmXProxyHelper in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -104,6 +151,8 @@
 			children = (
 				5B60409C303FEE1300F6C632 /* PrizmX */,
 				5B6040B1303FEE1400F6C702 /* PacketTunnel */,
+				5BD1E008306B0001000A0008 /* PrizmXHelper */,
+				5BD1E002306B0001000A0002 /* app.prizmx.macos.helper.plist */,
 				5B60409B303FEE1300F6C632 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -113,6 +162,7 @@
 			children = (
 				5B60409A303FEE1300F6C632 /* PrizmX.app */,
 				5B6040B0303FEE1400F6C701 /* app.prizmx.macos.packet-tunnel.systemextension */,
+				5BD1E001306B0001000A0001 /* PrizmXHelper */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -128,11 +178,14 @@
 				5B604097303FEE1300F6C632 /* Frameworks */,
 				5B604098303FEE1300F6C632 /* Resources */,
 				5B6040B9303FEE1400F6C70A /* Embed System Extensions */,
+				5BD1E006306B0001000A0006 /* Embed Helper */,
+				5BD1E007306B0001000A0007 /* Embed Launch Daemon */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				5B6040BB303FEE1400F6C70C /* PBXTargetDependency */,
+				5BD1E011306B0001000A0011 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				5B60409C303FEE1300F6C632 /* PrizmX */,
@@ -175,6 +228,28 @@
 			productReference = 5B6040B0303FEE1400F6C701 /* app.prizmx.macos.packet-tunnel.systemextension */;
 			productType = "com.apple.product-type.system-extension";
 		};
+		5BD1E009306B0001000A0009 /* PrizmXHelper */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5BD1E00C306B0001000A000C /* Build configuration list for PBXNativeTarget "PrizmXHelper" */;
+			buildPhases = (
+				5BD1E00A306B0001000A000A /* Sources */,
+				5BD1E00B306B0001000A000B /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				5BD1E008306B0001000A0008 /* PrizmXHelper */,
+			);
+			name = PrizmXHelper;
+			packageProductDependencies = (
+				5BD1E00F306B0001000A000F /* PrizmXProxyHelper */,
+			);
+			productName = PrizmXHelper;
+			productReference = 5BD1E001306B0001000A0001 /* PrizmXHelper */;
+			productType = "com.apple.product-type.tool";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -189,6 +264,9 @@
 						CreatedOnToolsVersion = 26.6;
 					};
 					5B6040B5303FEE1400F6C706 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					5BD1E009306B0001000A0009 = {
 						CreatedOnToolsVersion = 26.6;
 					};
 				};
@@ -214,6 +292,7 @@
 			targets = (
 				5B604099303FEE1300F6C632 /* PrizmX */,
 				5B6040B5303FEE1400F6C706 /* PacketTunnel */,
+				5BD1E009306B0001000A0009 /* PrizmXHelper */,
 			);
 		};
 /* End PBXProject section */
@@ -272,6 +351,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		5BD1E00A306B0001000A000A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -279,6 +365,11 @@
 			isa = PBXTargetDependency;
 			target = 5B6040B5303FEE1400F6C706 /* PacketTunnel */;
 			targetProxy = 5B6040BC303FEE1400F6C70D /* PBXContainerItemProxy */;
+		};
+		5BD1E011306B0001000A0011 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5BD1E009306B0001000A0009 /* PrizmXHelper */;
+			targetProxy = 5BD1E010306B0001000A0010 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -552,6 +643,42 @@
 			};
 			name = Release;
 		};
+		5BD1E00D306B0001000A000D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = N49M3Z72D3;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.prizmx.macos.helper;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		5BD1E00E306B0001000A000E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = N49M3Z72D3;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.prizmx.macos.helper;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -578,6 +705,15 @@
 			buildConfigurations = (
 				5B6040B6303FEE1400F6C707 /* Debug */,
 				5B6040B7303FEE1400F6C708 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5BD1E00C306B0001000A000C /* Build configuration list for PBXNativeTarget "PrizmXHelper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5BD1E00D306B0001000A000D /* Debug */,
+				5BD1E00E306B0001000A000E /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -646,6 +782,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 5BC0A001306A0001000A0001 /* XCRemoteSwiftPackageReference "posthog-ios" */;
 			productName = PostHog;
+		};
+		5BD1E00F306B0001000A000F /* PrizmXProxyHelper */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5B7A1101304B1001000A01 /* XCLocalSwiftPackageReference "../PrizmX-Kit" */;
+			productName = PrizmXProxyHelper;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
