@@ -230,11 +230,20 @@ final class MenuBarPolicyMenu: NSObject, NSMenuDelegate {
         var latencyColumn = NSParagraphStyle()
     }
 
-    private struct Choice {
-        var groupID: String
-        var memberID: String
-        var name: String
-        var node: OutboundNode?
+    private final class Choice {
+        let groupID: String
+        let memberID: String
+        let name: String
+        let node: OutboundNode?
+        /// The latency text on screen, so a tick writes only what changed.
+        var shownLatency: String?
+
+        init(groupID: String, memberID: String, name: String, node: OutboundNode?) {
+            self.groupID = groupID
+            self.memberID = memberID
+            self.name = name
+            self.node = node
+        }
     }
 
     private weak var appModel: AppModel?
@@ -296,10 +305,8 @@ final class MenuBarPolicyMenu: NSObject, NSMenuDelegate {
             (item.view as? MenuActionView)?.isEnabled = !nodeList.isPinging
         }
         for item in group.items {
-            guard let choice = item.representedObject as? Choice,
-                  let node = choice.node
-            else { continue }
-            Self.applyLatency(item, name: choice.name, node: node, nodeList: nodeList, column: group.latencyColumn)
+            guard let choice = item.representedObject as? Choice else { continue }
+            Self.applyLatency(item, choice: choice, nodeList: nodeList, column: group.latencyColumn)
         }
     }
 
@@ -332,6 +339,9 @@ final class MenuBarPolicyMenu: NSObject, NSMenuDelegate {
         let nodeList = appModel.nodeList
         let selected = nodeList.selectedMemberID(inGroup: section.id)
         group.latencyColumn = Self.latencyColumn(for: section.members.map(\.name))
+        // AppKit sizes a row without its image attachment or the indent of
+        // the check column; a tag past that width is not drawn at all.
+        group.minimumWidth = (group.latencyColumn.tabStops.first?.location ?? 0) + Self.latencyColumnInset
         // Like Surge's Benchmark: on top, and pressing it keeps the menu open.
         if section.members.contains(where: { $0.node != nil }) {
             let test = NSMenuItem()
@@ -348,39 +358,60 @@ final class MenuBarPolicyMenu: NSObject, NSMenuDelegate {
         for member in section.members {
             let item = NSMenuItem(title: member.name, action: #selector(selectMember(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = Choice(groupID: section.id, memberID: member.id, name: member.name, node: member.node)
+            let choice = Choice(groupID: section.id, memberID: member.id, name: member.name, node: member.node)
+            item.representedObject = choice
             item.state = member.id == selected ? .on : .off
             item.isEnabled = !member.isUnsupported
-            if let node = member.node {
-                Self.applyLatency(item, name: member.name, node: node, nodeList: nodeList, column: group.latencyColumn)
-            }
+            Self.applyLatency(item, choice: choice, nodeList: nodeList, column: group.latencyColumn)
             group.addItem(item)
         }
     }
 
     private static let titleFont = NSFont.menuFont(ofSize: 0)
-    private static let latencyFont = NSFont.monospacedDigitSystemFont(ofSize: titleFont.pointSize, weight: .regular)
+    private static let tagFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+    private static let tagHeight: CGFloat = 16
+    private static let tagPadding: CGFloat = 7
+    /// Room beside the tag column: the title's indent past a check column
+    /// (about 30 pt) plus a right margin of the same weight.
+    private static let latencyColumnInset: CGFloat = 48
 
-    /// A right tab past the widest name, so latencies line up in a column.
-    /// Badges can't take a color; a tab-separated title can.
+    /// A right tab past the widest name, so the tags line up in a column.
     private static func latencyColumn(for names: [String]) -> NSParagraphStyle {
         let nameWidth = names.map { ($0 as NSString).size(withAttributes: [.font: titleFont]).width }.max() ?? 0
-        let latencyWidth = (LatencyFormat.label(nil) as NSString).size(withAttributes: [.font: latencyFont]).width
+        let tagWidth = latencyTag(LatencyFormat.label(nil), color: .labelColor).size.width
         let style = NSMutableParagraphStyle()
-        style.tabStops = [NSTextTab(textAlignment: .right, location: ceil(nameWidth + 24 + latencyWidth))]
+        style.tabStops = [NSTextTab(textAlignment: .right, location: ceil(nameWidth + 24 + tagWidth))]
         return style
     }
 
-    /// The latency right of the name, in the Policies pane's colors
-    /// (`LatencyFormat`); "…" while a test is on its way. Writes only what
-    /// differs.
+    /// A badge-like capsule in a color. `NSMenuItemBadge` takes none, so the
+    /// tag is drawn into an image; the handler runs at draw time, under the
+    /// menu's appearance. The text is pulled toward the label color to stay
+    /// readable on the tinted fill (yellow on light, mostly).
+    private static func latencyTag(_ text: String, color: NSColor) -> NSImage {
+        let textSize = (text as NSString).size(withAttributes: [.font: tagFont])
+        let size = NSSize(width: ceil(textSize.width) + tagPadding * 2, height: tagHeight)
+        return NSImage(size: size, flipped: false) { rect in
+            color.withAlphaComponent(0.18).setFill()
+            NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2).fill()
+            let textColor = color.blended(withFraction: 0.3, of: .labelColor) ?? color
+            (text as NSString).draw(
+                at: NSPoint(x: tagPadding, y: (rect.height - textSize.height) / 2),
+                withAttributes: [.font: tagFont, .foregroundColor: textColor]
+            )
+            return true
+        }
+    }
+
+    /// The latency as a tag right of the name, in the Policies pane's colors
+    /// (`LatencyFormat`); "…" while a test is on its way.
     private static func applyLatency(
         _ item: NSMenuItem,
-        name: String,
-        node: OutboundNode,
+        choice: Choice,
         nodeList: NodeListViewModel,
         column: NSParagraphStyle
     ) {
+        guard let node = choice.node else { return }
         let latency: (text: String, color: NSColor)?
         if nodeList.hasPingResult(for: node) {
             let milliseconds = nodeList.latency(for: node)
@@ -390,19 +421,25 @@ final class MenuBarPolicyMenu: NSObject, NSMenuDelegate {
         } else {
             latency = nil
         }
-        let shown = item.attributedTitle?.string ?? item.title
-        guard shown != (latency.map { "\(name)\t\($0.text)" } ?? name) else { return }
+        guard choice.shownLatency != latency?.text else { return }
+        choice.shownLatency = latency?.text
         guard let latency else {
             item.attributedTitle = nil
-            item.title = name
+            item.title = choice.name
             return
         }
-        let title = NSMutableAttributedString(string: name, attributes: [.font: titleFont, .paragraphStyle: column])
-        title.append(NSAttributedString(string: "\t\(latency.text)", attributes: [
-            .font: latencyFont,
-            .foregroundColor: latency.color,
-            .paragraphStyle: column,
-        ]))
+        let title = NSMutableAttributedString(string: "\(choice.name)\t", attributes: [.font: titleFont])
+        let attachment = NSTextAttachment()
+        let tag = latencyTag(latency.text, color: latency.color)
+        attachment.image = tag
+        attachment.bounds = CGRect(
+            x: 0,
+            y: (titleFont.capHeight - tag.size.height) / 2,
+            width: tag.size.width,
+            height: tag.size.height
+        )
+        title.append(NSAttributedString(attachment: attachment))
+        title.addAttribute(.paragraphStyle, value: column, range: NSRange(location: 0, length: title.length))
         item.attributedTitle = title
     }
 

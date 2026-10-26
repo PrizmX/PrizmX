@@ -83,6 +83,6 @@ Drop `MenuBarExtra` and own the status item: an `NSStatusItem` with an `NSMenu` 
 ## Other AppKit menu notes
 
 - **Badges in an open menu**: replacing one `NSMenuItemBadge` with another keeps the old capsule size until the next change, so "40 ms" shows as "40". Clearing the badge first sizes the new one for its own text (`setBadgeText`).
-- **Colored values**: `NSMenuItemBadge` takes no color. Latencies are a right tab stop in the attributed title, past the group's widest name, colored like the Policies pane (`LatencyFormat`).
+- **Colored tags**: `NSMenuItemBadge` takes no color. Latencies are badge-like capsules drawn into an image (its drawing handler runs under the menu's appearance), attached to the title at a right tab stop past the group's widest name, and colored like the Policies pane (`LatencyFormat`). AppKit sizes such a row without the attachment and without the check column's indent, and an attachment past the menu's width is not drawn at all, so the group menu reserves the column with `minimumWidth`.
 - **A row that keeps the menu open**: a plain item's action ends tracking. `MenuActionView` is a custom view row that handles `mouseUp` itself; it draws the highlight to match a native row (24 pt tall, 5 pt inset, 8 pt corner radius, `controlAccentColor`).
 - **Main actor while tracking**: main-queue blocks and main-actor tasks keep running while a status item menu is open, so test results stream into it. A test that pops a menu up from inside a `DispatchQueue.main.async` block blocks the queue and suggests otherwise.
