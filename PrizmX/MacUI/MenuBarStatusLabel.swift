@@ -144,7 +144,7 @@ private struct MenuBarShortcutBridge: View {
             }
             .onAppear {
                 if dropdownHooks == nil {
-                    dropdownHooks = MenuBarDropdownHooks(appModel: appModel)
+                    dropdownHooks = MenuBarDropdownHooks(appModel: appModel, openWindow: openWindow)
                 }
             }
     }

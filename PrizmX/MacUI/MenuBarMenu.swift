@@ -1,89 +1,128 @@
 import AppKit
 import SwiftUI
+import PrizmXNodes
 import PrizmXServices
 import PrizmXUIComponents
 import PrizmXUIEngine
 
-/// Menu-bar dropdown, rendered as a native `NSMenu` (`.menuBarExtraStyle(.menu)`).
-/// Only menu-representable views belong here: Button, Toggle (checkmark),
-/// Picker / Menu (submenu), Divider, and Text (disabled info row). Anything
-/// else is dropped, hence the chart placeholder below.
+/// Menu-bar dropdown (`.menuBarExtraStyle(.menu)`). SwiftUI renders only the
+/// chart placeholder; every other row is AppKit (`MenuBarDropdownItems`),
+/// appended by the hooks. SwiftUI items get re-applied on every pass, which
+/// swaps the submenus of Picker / Menu items (closing whatever submenu is
+/// open) and clears what SwiftUI did not set, so no row may be SwiftUI's.
 ///
-/// Whenever this body changes, SwiftUI re-applies every property of every
-/// item, which resets the hover. Nothing read here may change per second:
-/// live values go through `MenuBarDropdownHooks`, which touches only its row.
+/// Known issue: an app-graph update makes MenuBarExtra replace the whole item
+/// array (`setItemArray`), appended rows included; while the app is active,
+/// opening a submenu triggers one. The open Policies submenus then close and
+/// a pending one may show on its own. See `docs/menu-bar.md`.
 struct MenuBarMenu: View {
-    /// Plain `String` (not localized) so the hooks can find the item by title.
-    static let tunTitle = "TUN Mode"
-
-    @Environment(AppModel.self) private var appModel
-    @Environment(\.openWindow) private var openWindow
-
     var body: some View {
-        @Bindable var appModel = appModel
-
         Text(verbatim: MenuBarTrafficItem.placeholderTitle)
+    }
+}
 
-        Divider()
+/// The live chart row. SwiftUI's `.menu` style drops custom views, so it rides
+/// on a placeholder item: when SwiftUI inserts that item, its `view` becomes a
+/// hosting view. SwiftUI keeps the item, and the view, across later updates.
+enum MenuBarTrafficItem {
+    static let placeholderTitle = "Traffic"
+    private static let width: CGFloat = 300
 
-        // Not a dependency on time: the hooks set the uptime in place when the
-        // menu opens and every second while it is open.
-        Toggle(Self.tunTitle, isOn: $appModel.tunModeEnabled)
-            .badge(Self.tunBadge(appModel, now: .now).map { Text(verbatim: $0) })
-        Toggle("System Proxy", isOn: $appModel.systemProxyEnabled)
+    /// No-op once the chart is attached.
+    static func attach(to item: NSMenuItem, appModel: AppModel) {
+        guard item.view == nil else { return }
+        let host = NSHostingView(rootView: MenuBarTrafficChart().environment(appModel))
+        host.frame.size = NSSize(width: width, height: host.fittingSize.height)
+        host.autoresizingMask = [.width]
+        item.view = host
+    }
+}
 
-        Picker("Outbound Mode", selection: $appModel.outboundMode) {
-            ForEach(OutboundMode.allCases) { mode in
-                Text(mode.title).tag(mode)
-            }
+/// The dropdown rows below the chart. Built once and kept across opens;
+/// `refresh()` writes only what differs, so ticking it while the menu is
+/// open leaves the hover alone.
+final class MenuBarDropdownItems: NSObject, NSMenuDelegate {
+    private weak var appModel: AppModel?
+    private let openWindow: OpenWindowAction
+    let policyMenu: MenuBarPolicyMenu
+    private var items: [NSMenuItem] = []
+
+    private let tunItem = NSMenuItem(title: "TUN Mode", action: #selector(toggleTun), keyEquivalent: "")
+    private let proxyItem = NSMenuItem(title: "System Proxy", action: #selector(toggleProxy), keyEquivalent: "")
+    private let outboundMenu = NSMenu()
+    private let profileItem = NSMenuItem(title: "Profile", action: nil, keyEquivalent: "")
+    private let profileMenu = NSMenu()
+
+    init(appModel: AppModel, openWindow: OpenWindowAction) {
+        self.appModel = appModel
+        self.openWindow = openWindow
+        policyMenu = MenuBarPolicyMenu(appModel: appModel)
+        super.init()
+
+        for mode in OutboundMode.allCases {
+            let item = NSMenuItem(title: mode.title, action: #selector(selectOutbound(_:)), keyEquivalent: "")
+            item.representedObject = mode.rawValue
+            outboundMenu.addItem(item)
         }
+        let outboundItem = NSMenuItem(title: "Outbound Mode", action: nil, keyEquivalent: "")
+        outboundItem.submenu = outboundMenu
+        profileMenu.delegate = self
+        profileItem.submenu = profileMenu
 
-        Divider()
-
-        profileMenu
-        // Slot for the AppKit Node submenu (`MenuBarNodeMenu`): a SwiftUI
-        // item per policy member costs ~30 KB, and profiles list thousands.
-        Button(MenuBarNodeMenu.placeholderTitle) {}
-
-        Divider()
-
-        Button("Open Console…") { appModel.presentMain(using: openWindow, selecting: .home) }
-            .keyboardShortcut("0", modifiers: .command)
-        Button("Inspector…") { appModel.presentInspector(using: openWindow) }
-            .keyboardShortcut("i", modifiers: .command)
-        Button("Settings…") { appModel.presentSettings(using: openWindow) }
-            .keyboardShortcut(",", modifiers: .command)
-
-        Divider()
-
-        Button("Quit PrizmX") { appModel.quit() }
-            .keyboardShortcut("q", modifiers: .command)
+        items = [
+            .separator(),
+            tunItem,
+            proxyItem,
+            outboundItem,
+            .separator(),
+            profileItem,
+            policyMenu.item,
+            .separator(),
+            Self.command("Open Console…", "0", #selector(openConsole)),
+            Self.command("Inspector…", "i", #selector(openInspector)),
+            Self.command("Settings…", ",", #selector(openSettings)),
+            .separator(),
+            Self.command("Quit PrizmX", "q", #selector(quit)),
+        ]
+        for item in items + outboundMenu.items where item.action != nil {
+            item.target = self
+        }
     }
 
-    // MARK: - Profile
+    private static func command(_ title: String, _ key: String, _ action: Selector) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        item.keyEquivalentModifierMask = .command
+        return item
+    }
 
-    private var profileMenu: some View {
-        let store = appModel.dashboard.profiles
-        return Menu("Profile: \(appModel.dashboard.activeProfileName)") {
-            ForEach(store.profiles) { profile in
-                Toggle(profile.name, isOn: Binding(
-                    get: { profile.id == store.activeProfileID },
-                    set: { isOn in if isOn { appModel.activateProfile(id: profile.id) } }
-                ))
-            }
-            if !store.profiles.isEmpty {
-                Divider()
-            }
-            Button("Manage Profiles…") {
-                appModel.presentMain(using: openWindow, selecting: .profiles)
-            }
+    /// True when the rows sit in no menu or in `menu`; moving them out of
+    /// a menu on screen would orphan an open submenu.
+    func isFree(for menu: NSMenu) -> Bool {
+        tunItem.menu == nil || tunItem.menu === menu
+    }
+
+    /// Appends the rows after the chart, once per dropdown menu.
+    func install(in menu: NSMenu) {
+        guard tunItem.menu !== menu else { return }
+        for item in items {
+            item.menu?.removeItem(item)
+            menu.addItem(item)
         }
     }
 
-    // MARK: - TUN badge
+    func refresh() {
+        guard let appModel else { return }
+        tunItem.setChecked(appModel.tunModeEnabled)
+        tunItem.setBadgeText(Self.tunBadge(appModel, now: .now))
+        proxyItem.setChecked(appModel.systemProxyEnabled)
+        for item in outboundMenu.items {
+            item.setChecked(item.representedObject as? String == appModel.outboundMode.rawValue)
+        }
+        profileItem.setTitleText("Profile: \(appModel.dashboard.activeProfileName)")
+    }
 
     /// Right side of TUN Mode: the transition while it flips, then the uptime.
-    static func tunBadge(_ appModel: AppModel, now: Date) -> String? {
+    private static func tunBadge(_ appModel: AppModel, now: Date) -> String? {
         switch appModel.dashboard.status {
         case .connecting: return "Connecting…"
         case .reconnecting: return "Reconnecting…"
@@ -92,6 +131,72 @@ struct MenuBarMenu: View {
             guard let start = appModel.sessionStartedAt else { return nil }
             return sessionUptime(from: start, now: now)
         }
+    }
+
+    // MARK: Profile submenu
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === profileMenu, let appModel else { return }
+        menu.removeAllItems()
+        let store = appModel.dashboard.profiles
+        for profile in store.profiles {
+            let item = NSMenuItem(title: profile.name, action: #selector(selectProfile(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = profile.id
+            item.setChecked(profile.id == store.activeProfileID)
+            menu.addItem(item)
+        }
+        if !store.profiles.isEmpty {
+            menu.addItem(.separator())
+        }
+        let manage = NSMenuItem(title: "Manage Profiles…", action: #selector(manageProfiles), keyEquivalent: "")
+        manage.target = self
+        menu.addItem(manage)
+    }
+
+    // MARK: Actions
+
+    @objc private func toggleTun() {
+        appModel?.tunModeEnabled.toggle()
+    }
+
+    @objc private func toggleProxy() {
+        appModel?.systemProxyEnabled.toggle()
+    }
+
+    @objc private func selectOutbound(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let mode = OutboundMode(rawValue: raw)
+        else { return }
+        appModel?.outboundMode = mode
+    }
+
+    @objc private func selectProfile(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID,
+              let appModel,
+              appModel.dashboard.profiles.activeProfileID != id
+        else { return }
+        appModel.activateProfile(id: id)
+    }
+
+    @objc private func manageProfiles() {
+        appModel?.presentMain(using: openWindow, selecting: .profiles)
+    }
+
+    @objc private func openConsole() {
+        appModel?.presentMain(using: openWindow, selecting: .home)
+    }
+
+    @objc private func openInspector() {
+        appModel?.presentInspector(using: openWindow)
+    }
+
+    @objc private func openSettings() {
+        appModel?.presentSettings(using: openWindow)
+    }
+
+    @objc private func quit() {
+        appModel?.quit()
     }
 }
 
@@ -107,82 +212,51 @@ private func sessionUptime(from start: Date, now: Date) -> String {
     return String(format: "%02d:%02d", minutes, seconds)
 }
 
-/// The live chart row. SwiftUI's `.menu` style drops custom views, so it rides
-/// on a placeholder item: when SwiftUI inserts that item, its `view` becomes a
-/// hosting view. SwiftUI keeps the item, and the view, across later updates.
-enum MenuBarTrafficItem {
-    static let placeholderTitle = "Traffic"
-    private static let width: CGFloat = 300
+/// The Policies submenu, one submenu per policy group like the Policies pane.
+/// Built when it first opens in a session and a group's members only when
+/// that group opens (a SwiftUI item per member costs ~30 KB, and profiles
+/// list thousands). Nothing is removed while the dropdown may still show it:
+/// a submenu whose parent item goes away mid-open still appears, on its own,
+/// shown and hidden with the app's activation. Stale rows are replaced when
+/// the next session opens the submenu.
+final class MenuBarPolicyMenu: NSObject, NSMenuDelegate {
+    let item = NSMenuItem(title: "Policies", action: nil, keyEquivalent: "")
 
-    /// True when `menu` is the dropdown and the chart was attached.
-    static func attach(to menu: NSMenu, at index: Int, appModel: AppModel) -> Bool {
-        guard menu.items.indices.contains(index) else { return false }
-        let item = menu.items[index]
-        guard item.title == placeholderTitle, item.view == nil else { return false }
-        let host = NSHostingView(rootView: MenuBarTrafficChart().environment(appModel))
-        host.frame.size = NSSize(width: width, height: host.fittingSize.height)
-        host.autoresizingMask = [.width]
-        item.view = host
-        return true
-    }
-}
-
-/// The Node submenu, one submenu per `select` group like the Policies pane.
-/// Built in AppKit when it opens and a group's members only when that group
-/// opens, so nothing per node stays resident. SwiftUI owns only the slot
-/// item; its title and submenu are put back whenever a SwiftUI pass resets
-/// them.
-final class MenuBarNodeMenu: NSObject, NSMenuDelegate {
-    static let placeholderTitle = "Node"
-
+    /// Carries its own snapshot: AppKit may reopen the Policies submenu without
+    /// asking it to update, so a group must not depend on shared state that
+    /// a close of its parent clears.
     private final class GroupMenu: NSMenu {
-        var groupID = ""
+        var section = PolicyGroupSection(id: "", title: "", members: [])
+        var latencyColumn = NSParagraphStyle()
     }
 
     private struct Choice {
         var groupID: String
         var memberID: String
+        var name: String
+        var node: OutboundNode?
     }
 
     private weak var appModel: AppModel?
-    private weak var slot: NSMenuItem?
     private let menu = NSMenu()
-    /// Snapshot taken when the submenu opens; group submenus read it.
-    private var sections: [PolicyGroupSection] = []
+    /// Built in this session; `reset()` marks them stale.
+    private var groupsAreCurrent = false
+    /// On screen now; its latencies follow a running test.
+    private weak var openGroup: GroupMenu?
+    /// Runs while a test started here is in flight, so results land as they
+    /// arrive rather than on the hooks' 1 Hz tick.
+    nonisolated(unsafe) private var testTimer: Timer?
 
     init(appModel: AppModel) {
         self.appModel = appModel
         super.init()
         menu.autoenablesItems = false
         menu.delegate = self
+        item.submenu = menu
     }
 
-    /// True when `menu` holds the slot at `index`, which now hosts the submenu.
-    func attach(to menu: NSMenu, at index: Int) -> Bool {
-        guard menu.items.indices.contains(index),
-              menu.items[index].title == Self.placeholderTitle
-        else { return false }
-        slot = menu.items[index]
-        refreshSlot()
-        return true
-    }
-
-    /// Re-applies the slot after any change to its item.
-    func itemChanged(in menu: NSMenu, at index: Int) {
-        guard let slot, menu.items.indices.contains(index), menu.items[index] === slot else { return }
-        refreshSlot()
-    }
-
-    /// Writes only what differs, so the change notification it posts is a no-op.
-    func refreshSlot() {
-        guard let slot, let appModel else { return }
-        let title = "Node: \(appModel.dashboard.activeNodeName)"
-        if slot.title != title {
-            slot.title = title
-        }
-        if slot.submenu !== menu {
-            slot.submenu = menu
-        }
+    deinit {
+        testTimer?.invalidate()
     }
 
     // MARK: NSMenuDelegate
@@ -190,23 +264,53 @@ final class MenuBarNodeMenu: NSObject, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         if let group = menu as? GroupMenu {
             fillMembers(of: group)
-        } else if menu === self.menu {
+        } else if menu === self.menu, !groupsAreCurrent {
             fillGroups()
         }
     }
 
+    func menuWillOpen(_ menu: NSMenu) {
+        if let group = menu as? GroupMenu {
+            openGroup = group
+        }
+    }
+
     func menuDidClose(_ menu: NSMenu) {
-        guard menu === self.menu else { return }
-        sections = []
+        if menu === openGroup {
+            openGroup = nil
+        }
+    }
+
+    /// The dropdown closed: the groups go stale but stay in place.
+    func reset() {
+        stopTestTimer()
+        openGroup = nil
+        groupsAreCurrent = false
+    }
+
+    /// Ticked by the hooks while the dropdown is open.
+    func refreshOpenGroup() {
+        guard let group = openGroup, let appModel else { return }
+        let nodeList = appModel.nodeList
+        for item in group.items {
+            (item.view as? MenuActionView)?.isEnabled = !nodeList.isPinging
+        }
+        for item in group.items {
+            guard let choice = item.representedObject as? Choice,
+                  let node = choice.node
+            else { continue }
+            Self.applyLatency(item, name: choice.name, node: node, nodeList: nodeList, column: group.latencyColumn)
+        }
     }
 
     private func fillGroups() {
+        groupsAreCurrent = true
         menu.removeAllItems()
-        sections = appModel?.nodeList.policyGroupSections ?? []
+        let sections = appModel?.nodeList.policyGroupSections ?? []
         for section in sections {
             let item = NSMenuItem(title: section.title, action: nil, keyEquivalent: "")
             let submenu = GroupMenu(title: section.title)
-            submenu.groupID = section.id
+            submenu.section = section
             submenu.autoenablesItems = false
             submenu.delegate = self
             item.submenu = submenu
@@ -223,18 +327,108 @@ final class MenuBarNodeMenu: NSObject, NSMenuDelegate {
 
     private func fillMembers(of group: GroupMenu) {
         group.removeAllItems()
-        guard let appModel,
-              let section = sections.first(where: { $0.id == group.groupID })
-        else { return }
-        let selected = appModel.nodeList.selectedMemberID(inGroup: section.id)
+        guard let appModel else { return }
+        let section = group.section
+        let nodeList = appModel.nodeList
+        let selected = nodeList.selectedMemberID(inGroup: section.id)
+        group.latencyColumn = Self.latencyColumn(for: section.members.map(\.name))
+        // Like Surge's Benchmark: on top, and pressing it keeps the menu open.
+        if section.members.contains(where: { $0.node != nil }) {
+            let test = NSMenuItem()
+            let view = MenuActionView(title: "Test Latency", busyTitle: "Testing…")
+            view.isEnabled = !nodeList.isPinging
+            view.onPress = { [weak self, weak view] in
+                view?.isEnabled = false
+                self?.testGroup(section.id)
+            }
+            test.view = view
+            group.addItem(test)
+            group.addItem(.separator())
+        }
         for member in section.members {
             let item = NSMenuItem(title: member.name, action: #selector(selectMember(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = Choice(groupID: section.id, memberID: member.id)
+            item.representedObject = Choice(groupID: section.id, memberID: member.id, name: member.name, node: member.node)
             item.state = member.id == selected ? .on : .off
             item.isEnabled = !member.isUnsupported
+            if let node = member.node {
+                Self.applyLatency(item, name: member.name, node: node, nodeList: nodeList, column: group.latencyColumn)
+            }
             group.addItem(item)
         }
+    }
+
+    private static let titleFont = NSFont.menuFont(ofSize: 0)
+    private static let latencyFont = NSFont.monospacedDigitSystemFont(ofSize: titleFont.pointSize, weight: .regular)
+
+    /// A right tab past the widest name, so latencies line up in a column.
+    /// Badges can't take a color; a tab-separated title can.
+    private static func latencyColumn(for names: [String]) -> NSParagraphStyle {
+        let nameWidth = names.map { ($0 as NSString).size(withAttributes: [.font: titleFont]).width }.max() ?? 0
+        let latencyWidth = (LatencyFormat.label(nil) as NSString).size(withAttributes: [.font: latencyFont]).width
+        let style = NSMutableParagraphStyle()
+        style.tabStops = [NSTextTab(textAlignment: .right, location: ceil(nameWidth + 24 + latencyWidth))]
+        return style
+    }
+
+    /// The latency right of the name, in the Policies pane's colors
+    /// (`LatencyFormat`); "…" while a test is on its way. Writes only what
+    /// differs.
+    private static func applyLatency(
+        _ item: NSMenuItem,
+        name: String,
+        node: OutboundNode,
+        nodeList: NodeListViewModel,
+        column: NSParagraphStyle
+    ) {
+        let latency: (text: String, color: NSColor)?
+        if nodeList.hasPingResult(for: node) {
+            let milliseconds = nodeList.latency(for: node)
+            latency = (LatencyFormat.label(milliseconds), NSColor(LatencyFormat.color(milliseconds)))
+        } else if nodeList.isPinging {
+            latency = ("…", .secondaryLabelColor)
+        } else {
+            latency = nil
+        }
+        let shown = item.attributedTitle?.string ?? item.title
+        guard shown != (latency.map { "\(name)\t\($0.text)" } ?? name) else { return }
+        guard let latency else {
+            item.attributedTitle = nil
+            item.title = name
+            return
+        }
+        let title = NSMutableAttributedString(string: name, attributes: [.font: titleFont, .paragraphStyle: column])
+        title.append(NSAttributedString(string: "\t\(latency.text)", attributes: [
+            .font: latencyFont,
+            .foregroundColor: latency.color,
+            .paragraphStyle: column,
+        ]))
+        item.attributedTitle = title
+    }
+
+    private func testGroup(_ groupID: String) {
+        guard let appModel, !appModel.nodeList.isPinging else { return }
+        Task { await appModel.nodeList.pingGroup(groupID) }
+        stopTestTimer()
+        // The first tick comes after the test has set `isPinging`; a test
+        // that already ended still gets its results painted once.
+        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.refreshOpenGroup()
+                if self.appModel?.nodeList.isPinging != true {
+                    self.stopTestTimer()
+                }
+            }
+        }
+        // Menu tracking spins the run loop in event-tracking mode.
+        RunLoop.main.add(timer, forMode: .common)
+        testTimer = timer
+    }
+
+    private func stopTestTimer() {
+        testTimer?.invalidate()
+        testTimer = nil
     }
 
     @objc private func selectMember(_ sender: NSMenuItem) {
@@ -247,6 +441,86 @@ final class MenuBarNodeMenu: NSObject, NSMenuDelegate {
 
     @objc private func selectNode() {
         NotificationCenter.default.post(name: AppEvent.presentNodePicker, object: nil)
+    }
+}
+
+/// Setters that write only what differs: an item change makes an open menu
+/// lay out again.
+private extension NSMenuItem {
+    /// In an open menu, a badge replaced by another keeps the old capsule size
+    /// until the next change ("40" for "40 ms"); one added fresh is sized for
+    /// its own text, so the old badge goes first.
+    func setBadgeText(_ text: String?) {
+        guard badge?.stringValue != text else { return }
+        badge = nil
+        badge = text.map { NSMenuItemBadge(string: $0) }
+    }
+
+    func setTitleText(_ text: String) {
+        if title != text {
+            title = text
+        }
+    }
+
+    func setChecked(_ checked: Bool) {
+        let value: NSControl.StateValue = checked ? .on : .off
+        if state != value {
+            state = value
+        }
+    }
+}
+
+/// A menu row that runs its action without closing the menu (a plain item's
+/// click ends tracking). Drawn to match a native row: same height, inset,
+/// corner radius and accent highlight.
+private final class MenuActionView: NSView {
+    var onPress: (() -> Void)?
+    var isEnabled = true {
+        didSet {
+            guard isEnabled != oldValue else { return }
+            label.stringValue = isEnabled ? title : busyTitle
+            needsDisplay = true
+        }
+    }
+
+    private let title: String
+    private let busyTitle: String
+    private let label = NSTextField(labelWithString: "")
+
+    init(title: String, busyTitle: String) {
+        self.title = title
+        self.busyTitle = busyTitle
+        super.init(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        autoresizingMask = [.width]
+        label.stringValue = title
+        label.font = .menuFont(ofSize: 0)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    private var isHighlighted: Bool {
+        isEnabled && enclosingMenuItem?.isHighlighted == true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        label.textColor = !isEnabled ? .disabledControlTextColor
+            : isHighlighted ? .selectedMenuItemTextColor : .labelColor
+        guard isHighlighted else { return }
+        NSColor.controlAccentColor.setFill()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 5, dy: 0), xRadius: 8, yRadius: 8).fill()
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard isEnabled else { return }
+        onPress?()
     }
 }
 
@@ -284,21 +558,23 @@ private struct MenuBarTrafficChart: View {
     }
 }
 
-/// AppKit side of the dropdown: attaches the chart and the Node submenu, and
-/// ticks the TUN uptime badge in place. Observers run synchronously on the
-/// posting (main) thread, so both are attached before the menu first draws;
-/// SwiftUI only inserts the items after tracking has begun.
+/// AppKit side of the dropdown: attaches the chart and the rows below it, and
+/// ticks them while the menu is open. Observers run synchronously on the
+/// posting (main) thread, so the rows are in place before the menu first
+/// draws; SwiftUI only inserts its placeholder after tracking has begun.
 final class MenuBarDropdownHooks {
     private weak var appModel: AppModel?
+    private let rows: MenuBarDropdownItems
     /// Known once the chart placeholder shows up in it.
     private weak var dropdown: NSMenu?
-    private let nodeMenu: MenuBarNodeMenu
     nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
-    nonisolated(unsafe) private var badgeTimer: Timer?
+    nonisolated(unsafe) private var tickTimer: Timer?
+    /// Between a root menu's tracking start and end.
+    private var isTracking = false
 
-    init(appModel: AppModel) {
+    init(appModel: AppModel, openWindow: OpenWindowAction) {
         self.appModel = appModel
-        nodeMenu = MenuBarNodeMenu(appModel: appModel)
+        rows = MenuBarDropdownItems(appModel: appModel, openWindow: openWindow)
         let center = NotificationCenter.default
         observers = [
             center.addObserver(forName: NSMenu.didAddItemNotification, object: nil, queue: nil) { [weak self] note in
@@ -307,15 +583,6 @@ final class MenuBarDropdownHooks {
                 MainActor.assumeIsolated {
                     guard let self, let menu, let index else { return }
                     self.itemAdded(to: menu, at: index)
-                }
-            },
-            // SwiftUI re-applies every item when the menu content changes.
-            center.addObserver(forName: NSMenu.didChangeItemNotification, object: nil, queue: nil) { [weak self] note in
-                let menu = note.object as? NSMenu
-                let index = note.userInfo?["NSMenuItemIndex"] as? Int
-                MainActor.assumeIsolated {
-                    guard let self, let menu, let index else { return }
-                    self.nodeMenu.itemChanged(in: menu, at: index)
                 }
             },
             center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { [weak self] note in
@@ -336,46 +603,51 @@ final class MenuBarDropdownHooks {
     }
 
     deinit {
-        badgeTimer?.invalidate()
+        tickTimer?.invalidate()
         observers.forEach(NotificationCenter.default.removeObserver)
     }
 
+    /// The placeholder is the dropdown's only SwiftUI item, so it sits first;
+    /// before the rows go in, it is alone (another menu may reuse the title).
     private func itemAdded(to menu: NSMenu, at index: Int) {
-        // The chart placeholder comes first and identifies the dropdown; other
-        // menus (a "Node" table column's header menu) may reuse the title.
-        if menu === dropdown, nodeMenu.attach(to: menu, at: index) { return }
-        guard let appModel, MenuBarTrafficItem.attach(to: menu, at: index, appModel: appModel) else { return }
+        guard let appModel, index == 0,
+              menu.items.first?.title == MenuBarTrafficItem.placeholderTitle,
+              menu === dropdown || menu.items.count == 1
+        else { return }
+        MenuBarTrafficItem.attach(to: menu.items[0], appModel: appModel)
         dropdown = menu
+        // A new dropdown built while the old one is on screen waits for the
+        // next open: the rows may be showing a submenu in the old one.
+        guard !isTracking || rows.isFree(for: menu) else { return }
+        rows.install(in: menu)
+        rows.refresh()
     }
 
     private func menuOpened() {
+        isTracking = true
         appModel?.menuDidOpen()
-        nodeMenu.refreshSlot()
-        tickTunBadge()
-        guard badgeTimer == nil else { return }
+        if let dropdown {
+            rows.install(in: dropdown)
+        }
+        rows.refresh()
+        guard tickTimer == nil else { return }
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.tickTunBadge() }
+            MainActor.assumeIsolated {
+                self?.rows.refresh()
+                self?.rows.policyMenu.refreshOpenGroup()
+            }
         }
         // Menu tracking spins the run loop in event-tracking mode.
         RunLoop.main.add(timer, forMode: .common)
-        badgeTimer = timer
+        tickTimer = timer
     }
 
     private func menuClosed() {
-        badgeTimer?.invalidate()
-        badgeTimer = nil
+        isTracking = false
+        tickTimer?.invalidate()
+        tickTimer = nil
+        rows.policyMenu.reset()
         appModel?.menuDidClose()
-    }
-
-    /// Sets only this item's badge. Also restores it within a second after a
-    /// SwiftUI pass puts back the open-time value.
-    private func tickTunBadge() {
-        guard let appModel,
-              let item = dropdown?.items.first(where: { $0.title == MenuBarMenu.tunTitle })
-        else { return }
-        let text = MenuBarMenu.tunBadge(appModel, now: .now)
-        guard item.badge?.stringValue != text else { return }
-        item.badge = text.map { NSMenuItemBadge(string: $0) }
     }
 
     /// The dropdown can't be told apart at tracking start (it has no items
