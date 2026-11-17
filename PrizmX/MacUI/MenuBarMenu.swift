@@ -120,6 +120,10 @@ final class MenuBarDropdownItems: NSObject, NSMenuDelegate {
         if !store.profiles.isEmpty {
             menu.addItem(.separator())
         }
+        let reload = NSMenuItem(title: "Reload Profile", action: #selector(reloadProfile), keyEquivalent: "")
+        reload.target = self
+        reload.isEnabled = store.activeProfile != nil
+        menu.addItem(reload)
         let manage = NSMenuItem(title: "Manage Profiles…", action: #selector(manageProfiles), keyEquivalent: "")
         manage.target = self
         menu.addItem(manage)
@@ -148,6 +152,10 @@ final class MenuBarDropdownItems: NSObject, NSMenuDelegate {
               appModel.dashboard.profiles.activeProfileID != id
         else { return }
         appModel.activateProfile(id: id)
+    }
+
+    @objc private func reloadProfile() {
+        appModel?.reloadActiveProfile()
     }
 
     @objc private func manageProfiles() {

@@ -353,9 +353,16 @@ struct HomePane: View {
             totalBytes: profile?.totalBytes ?? 0,
             formatLabel: profile?.formatLabel ?? "—"
         ) {
-            if let profile, profile.isSubscription {
-                WidgetIconButton(systemImage: "arrow.clockwise", help: "Update subscription") {
-                    Task { await appModel.refreshSubscription(id: profile.id) }
+            if let profile {
+                HStack(spacing: 4) {
+                    WidgetIconButton(systemImage: "arrow.trianglehead.2.clockwise", help: "Reload profile") {
+                        appModel.reloadActiveProfile()
+                    }
+                    if profile.isSubscription {
+                        WidgetIconButton(systemImage: "arrow.clockwise", help: "Update subscription") {
+                            Task { await appModel.refreshSubscription(id: profile.id) }
+                        }
+                    }
                 }
             }
         }

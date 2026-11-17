@@ -762,6 +762,18 @@ final class AppModel {
         scheduleReload(reason: "overlay saved")
     }
 
+    /// Re-parses the active profile catalog and reloads the live tunnel /
+    /// mixed-port engine without switching profiles.
+    func reloadActiveProfile() {
+        guard dashboard.profiles.activeProfile != nil else { return }
+        dashboard.profiles.rebuildCatalog()
+        refreshInboundListen()
+        if tunModeEnabled || systemProxyEnabled || allowLANEnabled {
+            scheduleReload(reason: "profile reloaded")
+        }
+        Task { await refreshProviders() }
+    }
+
     /// UI catalog already rebuilt; restart Packet Tunnel / mixed-port so the
     /// live engine matches the newly selected profile. Coalesced like other
     /// takeover flips so rapid switching cannot race stop/start.
