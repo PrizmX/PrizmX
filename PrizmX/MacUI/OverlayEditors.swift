@@ -31,32 +31,34 @@ struct OverlayRuleEditor: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title).font(.headline)
-            Form {
-                Picker("Type", selection: $type) {
-                    ForEach(OverlayRule.Kind.allCases) { kind in
-                        Text(kind.clashType).tag(kind)
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title)
+                    .font(.headline)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 20)
+                Form {
+                    Picker("Type", selection: $type) {
+                        ForEach(OverlayRule.Kind.allCases) { kind in
+                            Text(kind.clashType).tag(kind)
+                        }
+                    }
+                    if type != .matchAll {
+                        TextField("Payload", text: $payload)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    Picker("Policy", selection: $policy) {
+                        ForEach(policyOptions, id: \.self) { name in
+                            Text(name).tag(name)
+                        }
+                    }
+                    if type == .geoIP || type == .ipCIDR {
+                        Toggle("no-resolve", isOn: $noResolve)
                     }
                 }
-                if type != .matchAll {
-                    TextField("Payload", text: $payload)
-                        .textFieldStyle(.roundedBorder)
-                }
-                Picker("Policy", selection: $policy) {
-                    ForEach(policyOptions, id: \.self) { name in
-                        Text(name).tag(name)
-                    }
-                }
-                if type == .geoIP || type == .ipCIDR {
-                    Toggle("no-resolve", isOn: $noResolve)
-                }
+                .formStyle(.grouped)
+                .scrollContentBackground(.hidden)
             }
-            .formStyle(.grouped)
-        }
-        .padding(20)
-        .frame(minWidth: 420)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
             SheetActionBar(
                 doneTitle: "Save",
                 doneEnabled: canSave,
@@ -66,6 +68,7 @@ struct OverlayRuleEditor: View {
                     .keyboardShortcut(.cancelAction)
             }
         }
+        .frame(minWidth: 420)
     }
 
     private var policyOptions: [String] {
@@ -121,33 +124,35 @@ struct OverlayGroupEditor: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title).font(.headline)
-            Form {
-                TextField("Name", text: $name)
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(nameLocked)
-                Picker("Mode", selection: $mode) {
-                    Text("select").tag("select")
-                    Text("url-test").tag("url-test")
-                    Text("fallback").tag("fallback")
-                    Text("load-balance").tag("load-balance")
-                }
-                if mode != "select" {
-                    TextField("Test URL", text: $testURL)
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title)
+                    .font(.headline)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 20)
+                Form {
+                    TextField("Name", text: $name)
                         .textFieldStyle(.roundedBorder)
-                }
-                Section("Members") {
-                    ForEach(memberChoices, id: \.self) { item in
-                        Toggle(item, isOn: memberBinding(item))
+                        .disabled(nameLocked)
+                    Picker("Mode", selection: $mode) {
+                        Text("select").tag("select")
+                        Text("url-test").tag("url-test")
+                        Text("fallback").tag("fallback")
+                        Text("load-balance").tag("load-balance")
+                    }
+                    if mode != "select" {
+                        TextField("Test URL", text: $testURL)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    Section("Members") {
+                        ForEach(memberChoices, id: \.self) { item in
+                            Toggle(item, isOn: memberBinding(item))
+                        }
                     }
                 }
+                .formStyle(.grouped)
+                .scrollContentBackground(.hidden)
             }
-            .formStyle(.grouped)
-        }
-        .padding(20)
-        .frame(minWidth: 420, minHeight: 420)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
             SheetActionBar(
                 doneTitle: "Save",
                 doneEnabled: canSave,
@@ -157,6 +162,7 @@ struct OverlayGroupEditor: View {
                     .keyboardShortcut(.cancelAction)
             }
         }
+        .frame(minWidth: 420, minHeight: 420)
     }
 
     private var canSave: Bool {

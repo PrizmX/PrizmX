@@ -525,24 +525,28 @@ private struct InstallFromURLSheet: View {
     var onInstall: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Install from URL").font(.headline)
-            Form {
-                TextField("Name", text: $name)
-                TextField("Subscription URL", text: $urlString)
-                    .textContentType(.URL)
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Install from URL")
+                    .font(.headline)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 20)
+                Form {
+                    TextField("Name", text: $name)
+                    TextField("Subscription URL", text: $urlString)
+                        .textContentType(.URL)
+                }
+                .formStyle(.grouped)
+                .scrollContentBackground(.hidden)
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.callout)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 12)
+                }
             }
-            .formStyle(.grouped)
-            if let errorMessage {
-                Text(errorMessage)
-                    .font(.callout)
-                    .foregroundStyle(.red)
-                    .textSelection(.enabled)
-            }
-        }
-        .padding(20)
-        .frame(minWidth: 520)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
             SheetActionBar(
                 doneTitle: "Install",
                 doneEnabled: !urlString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isImporting,
@@ -552,6 +556,7 @@ private struct InstallFromURLSheet: View {
                     .keyboardShortcut(.cancelAction)
             }
         }
+        .frame(minWidth: 520)
     }
 }
 

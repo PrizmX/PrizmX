@@ -322,6 +322,7 @@ private struct FakeIPFilterSheet: View {
                 dismiss()
             } leading: {
                 Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
             }
         }
         .frame(width: 440)

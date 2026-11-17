@@ -173,8 +173,12 @@ private struct ScriptEditorSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title).font(.headline)
+        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title)
+                .font(.headline)
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
             Form {
                 TextField("Name", text: $name)
                     .textFieldStyle(.roundedBorder)
@@ -199,48 +203,51 @@ private struct ScriptEditorSheet: View {
                 }
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
 
-            Text("Source")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            TextEditor(text: $source)
-                .font(.system(.body, design: .monospaced))
-                .scrollContentBackground(.hidden)
-                .padding(8)
-                .frame(minHeight: 180)
-                .background(Color(nsColor: .textBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 1)
-                )
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Source")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $source)
+                    .font(.system(.body, design: .monospaced))
+                    .scrollContentBackground(.hidden)
+                    .padding(8)
+                    .frame(minHeight: 180)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 1)
+                    )
 
-            if !output.isEmpty {
-                ScrollView {
-                    Text(output)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                if !output.isEmpty {
+                    ScrollView {
+                        Text(output)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 88)
                 }
-                .frame(maxHeight: 88)
             }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 20)
         }
-        .padding(20)
+        SheetActionBar(
+            doneTitle: "Save",
+            doneEnabled: canSave,
+            onDone: save
+        ) {
+            Button("Cancel", action: dismiss.callAsFunction)
+                .keyboardShortcut(.cancelAction)
+            Button(isRunning ? "Running…" : "Run") { run() }
+                .disabled(isRunning || source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .help("Evaluate with JavaScriptCore")
+        }
+        }
         .frame(minWidth: 640, minHeight: 520)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            SheetActionBar(
-                doneTitle: "Save",
-                doneEnabled: canSave,
-                onDone: save
-            ) {
-                Button("Cancel", action: dismiss.callAsFunction)
-                    .keyboardShortcut(.cancelAction)
-                Button(isRunning ? "Running…" : "Run") { run() }
-                    .disabled(isRunning || source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .help("Evaluate with JavaScriptCore")
-            }
-        }
     }
 
     private var canSave: Bool {
