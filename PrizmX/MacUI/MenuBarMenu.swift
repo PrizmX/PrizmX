@@ -5,36 +5,17 @@ import PrizmXServices
 import PrizmXUIComponents
 import PrizmXUIEngine
 
-/// Menu-bar dropdown (`.menuBarExtraStyle(.menu)`). SwiftUI renders only the
-/// chart placeholder; every other row is AppKit (`MenuBarDropdownItems`),
-/// appended by the hooks. SwiftUI items get re-applied on every pass, which
-/// swaps the submenus of Picker / Menu items (closing whatever submenu is
-/// open) and clears what SwiftUI did not set, so no row may be SwiftUI's.
-///
-/// Known issue: an app-graph update makes MenuBarExtra replace the whole item
-/// array (`setItemArray`), appended rows included; while the app is active,
-/// opening a submenu triggers one. The open Policies submenus then close and
-/// a pending one may show on its own. See `docs/menu-bar.md`.
-struct MenuBarMenu: View {
-    var body: some View {
-        Text(verbatim: MenuBarTrafficItem.placeholderTitle)
-    }
-}
-
-/// The live chart row. SwiftUI's `.menu` style drops custom views, so it rides
-/// on a placeholder item: when SwiftUI inserts that item, its `view` becomes a
-/// hosting view. SwiftUI keeps the item, and the view, across later updates.
+/// The live chart row hosted inside an `NSMenuItem`.
 enum MenuBarTrafficItem {
-    static let placeholderTitle = "Traffic"
     private static let width: CGFloat = 300
 
-    /// No-op once the chart is attached.
-    static func attach(to item: NSMenuItem, appModel: AppModel) {
-        guard item.view == nil else { return }
+    static func make(appModel: AppModel) -> NSMenuItem {
+        let item = NSMenuItem()
         let host = NSHostingView(rootView: MenuBarTrafficChart().environment(appModel))
         host.frame.size = NSSize(width: width, height: host.fittingSize.height)
         host.autoresizingMask = [.width]
         item.view = host
+        return item
     }
 }
 
@@ -43,7 +24,6 @@ enum MenuBarTrafficItem {
 /// open leaves the hover alone.
 final class MenuBarDropdownItems: NSObject, NSMenuDelegate {
     private weak var appModel: AppModel?
-    private let openWindow: OpenWindowAction
     let policyMenu: MenuBarPolicyMenu
     private var items: [NSMenuItem] = []
 
@@ -53,9 +33,8 @@ final class MenuBarDropdownItems: NSObject, NSMenuDelegate {
     private let profileItem = NSMenuItem(title: "Profile", action: nil, keyEquivalent: "")
     private let profileMenu = NSMenu()
 
-    init(appModel: AppModel, openWindow: OpenWindowAction) {
+    init(appModel: AppModel) {
         self.appModel = appModel
-        self.openWindow = openWindow
         policyMenu = MenuBarPolicyMenu(appModel: appModel)
         super.init()
 
@@ -95,17 +74,11 @@ final class MenuBarDropdownItems: NSObject, NSMenuDelegate {
         return item
     }
 
-    /// True when the rows sit in no menu or in `menu`; moving them out of
-    /// a menu on screen would orphan an open submenu.
-    func isFree(for menu: NSMenu) -> Bool {
-        tunItem.menu == nil || tunItem.menu === menu
-    }
-
-    /// Appends the rows after the chart, once per dropdown menu.
+    /// Populates the owned status-item menu with the live chart and all rows.
     func install(in menu: NSMenu) {
-        guard tunItem.menu !== menu else { return }
+        guard let appModel, menu.items.isEmpty else { return }
+        menu.addItem(MenuBarTrafficItem.make(appModel: appModel))
         for item in items {
-            item.menu?.removeItem(item)
             menu.addItem(item)
         }
     }
@@ -113,7 +86,7 @@ final class MenuBarDropdownItems: NSObject, NSMenuDelegate {
     func refresh() {
         guard let appModel else { return }
         tunItem.setChecked(appModel.tunModeEnabled)
-        tunItem.setBadgeText(Self.tunBadge(appModel, now: .now))
+        tunItem.setBadgeText(Self.tunBadge(appModel))
         proxyItem.setChecked(appModel.systemProxyEnabled)
         for item in outboundMenu.items {
             item.setChecked(item.representedObject as? String == appModel.outboundMode.rawValue)
@@ -121,15 +94,13 @@ final class MenuBarDropdownItems: NSObject, NSMenuDelegate {
         profileItem.setTitleText("Profile: \(appModel.dashboard.activeProfileName)")
     }
 
-    /// Right side of TUN Mode: the transition while it flips, then the uptime.
-    private static func tunBadge(_ appModel: AppModel, now: Date) -> String? {
+    /// Right side of TUN Mode: the transition state while it flips.
+    private static func tunBadge(_ appModel: AppModel) -> String? {
         switch appModel.dashboard.status {
         case .connecting: return "Connecting…"
         case .reconnecting: return "Reconnecting…"
         case .disconnecting: return "Disconnecting…"
-        default:
-            guard let start = appModel.sessionStartedAt else { return nil }
-            return sessionUptime(from: start, now: now)
+        default: return nil
         }
     }
 
@@ -180,36 +151,24 @@ final class MenuBarDropdownItems: NSObject, NSMenuDelegate {
     }
 
     @objc private func manageProfiles() {
-        appModel?.presentMain(using: openWindow, selecting: .profiles)
+        appModel?.presentMain(selecting: .profiles)
     }
 
     @objc private func openConsole() {
-        appModel?.presentMain(using: openWindow, selecting: .home)
+        appModel?.presentMain(selecting: .home)
     }
 
     @objc private func openInspector() {
-        appModel?.presentInspector(using: openWindow)
+        appModel?.presentInspector()
     }
 
     @objc private func openSettings() {
-        appModel?.presentSettings(using: openWindow)
+        appModel?.presentSettings()
     }
 
     @objc private func quit() {
         appModel?.quit()
     }
-}
-
-/// Session uptime (`h:mm:ss`, `mm:ss`).
-private func sessionUptime(from start: Date, now: Date) -> String {
-    let total = max(0, Int(now.timeIntervalSince(start)))
-    let hours = total / 3600
-    let minutes = (total % 3600) / 60
-    let seconds = total % 60
-    if hours > 0 {
-        return String(format: "%d:%02d:%02d", hours, minutes, seconds)
-    }
-    return String(format: "%02d:%02d", minutes, seconds)
 }
 
 /// The Policies submenu, one submenu per policy group like the Policies pane.
@@ -592,105 +551,5 @@ private struct MenuBarTrafficChart: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
-    }
-}
-
-/// AppKit side of the dropdown: attaches the chart and the rows below it, and
-/// ticks them while the menu is open. Observers run synchronously on the
-/// posting (main) thread, so the rows are in place before the menu first
-/// draws; SwiftUI only inserts its placeholder after tracking has begun.
-final class MenuBarDropdownHooks {
-    private weak var appModel: AppModel?
-    private let rows: MenuBarDropdownItems
-    /// Known once the chart placeholder shows up in it.
-    private weak var dropdown: NSMenu?
-    nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
-    nonisolated(unsafe) private var tickTimer: Timer?
-    /// Between a root menu's tracking start and end.
-    private var isTracking = false
-
-    init(appModel: AppModel, openWindow: OpenWindowAction) {
-        self.appModel = appModel
-        rows = MenuBarDropdownItems(appModel: appModel, openWindow: openWindow)
-        let center = NotificationCenter.default
-        observers = [
-            center.addObserver(forName: NSMenu.didAddItemNotification, object: nil, queue: nil) { [weak self] note in
-                let menu = note.object as? NSMenu
-                let index = note.userInfo?["NSMenuItemIndex"] as? Int
-                MainActor.assumeIsolated {
-                    guard let self, let menu, let index else { return }
-                    self.itemAdded(to: menu, at: index)
-                }
-            },
-            center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { [weak self] note in
-                let menu = note.object as? NSMenu
-                MainActor.assumeIsolated {
-                    guard let menu, Self.isRootPopup(menu) else { return }
-                    self?.menuOpened()
-                }
-            },
-            center.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: nil) { [weak self] note in
-                let menu = note.object as? NSMenu
-                MainActor.assumeIsolated {
-                    guard let menu, Self.isRootPopup(menu) else { return }
-                    self?.menuClosed()
-                }
-            }
-        ]
-    }
-
-    deinit {
-        tickTimer?.invalidate()
-        observers.forEach(NotificationCenter.default.removeObserver)
-    }
-
-    /// The placeholder is the dropdown's only SwiftUI item, so it sits first;
-    /// before the rows go in, it is alone (another menu may reuse the title).
-    private func itemAdded(to menu: NSMenu, at index: Int) {
-        guard let appModel, index == 0,
-              menu.items.first?.title == MenuBarTrafficItem.placeholderTitle,
-              menu === dropdown || menu.items.count == 1
-        else { return }
-        MenuBarTrafficItem.attach(to: menu.items[0], appModel: appModel)
-        dropdown = menu
-        // A new dropdown built while the old one is on screen waits for the
-        // next open: the rows may be showing a submenu in the old one.
-        guard !isTracking || rows.isFree(for: menu) else { return }
-        rows.install(in: menu)
-        rows.refresh()
-    }
-
-    private func menuOpened() {
-        isTracking = true
-        appModel?.menuDidOpen()
-        if let dropdown {
-            rows.install(in: dropdown)
-        }
-        rows.refresh()
-        guard tickTimer == nil else { return }
-        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.rows.refresh()
-                self?.rows.policyMenu.refreshOpenGroup()
-            }
-        }
-        // Menu tracking spins the run loop in event-tracking mode.
-        RunLoop.main.add(timer, forMode: .common)
-        tickTimer = timer
-    }
-
-    private func menuClosed() {
-        isTracking = false
-        tickTimer?.invalidate()
-        tickTimer = nil
-        rows.policyMenu.reset()
-        appModel?.menuDidClose()
-    }
-
-    /// The dropdown can't be told apart at tracking start (it has no items
-    /// yet on first open); any root non-main menu counts, at the cost of a
-    /// 1 Hz timer while a context menu is open.
-    private static func isRootPopup(_ menu: NSMenu) -> Bool {
-        menu !== NSApp.mainMenu && menu.supermenu == nil
     }
 }

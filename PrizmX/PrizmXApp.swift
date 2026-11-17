@@ -41,16 +41,6 @@ struct PrizmXApp: App {
         }
         .defaultSize(width: 1100, height: 700)
         .defaultLaunchBehavior(.suppressed)
-
-        MenuBarExtra {
-            MenuBarMenu()
-                .environment(appModel)
-        } label: {
-            MenuBarStatusLabel()
-                .environment(appModel)
-                .onAppear { appModel.applyLaunchPolicy() }
-        }
-        .menuBarExtraStyle(.menu)
     }
 }
 

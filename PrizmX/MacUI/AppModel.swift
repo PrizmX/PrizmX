@@ -289,7 +289,11 @@ final class AppModel {
     /// history above keeps accumulating either way.
     var isInspectorPresented = false {
         didSet {
-            if isInspectorPresented, !oldValue { refreshInspectorRows() }
+            if isInspectorPresented, !oldValue {
+                refreshInspectorRows()
+            } else if !isInspectorPresented, oldValue {
+                inspectorFilter = ""
+            }
         }
     }
     /// Inspector table and sidebar, rebuilt by `refreshInspectorRows()` when
@@ -395,6 +399,10 @@ final class AppModel {
 
     @ObservationIgnored
     nonisolated(unsafe) private var uiVisibilityObservers: [NSObjectProtocol] = []
+    @ObservationIgnored
+    nonisolated(unsafe) private var launchObserver: NSObjectProtocol?
+    @ObservationIgnored
+    private var menuBarController: MenuBarController?
 
     @ObservationIgnored
     nonisolated(unsafe) private var keyMonitor: Any?
@@ -492,6 +500,7 @@ final class AppModel {
         // Assignments in init skip didSet.
         refreshInspectorRows()
         if !preview {
+            installMenuBar()
             installKeyMonitor()
             installUIVisibilityTracking()
             startTrafficIngest()
@@ -554,6 +563,9 @@ final class AppModel {
         }
         if let terminateObserver {
             NotificationCenter.default.removeObserver(terminateObserver)
+        }
+        if let launchObserver {
+            NotificationCenter.default.removeObserver(launchObserver)
         }
         for observer in uiVisibilityObservers {
             NotificationCenter.default.removeObserver(observer)
@@ -798,7 +810,7 @@ final class AppModel {
         }
     }
 
-    /// Reported by `MenuBarDropdownHooks` from menu tracking.
+    /// Reported by `MenuBarController` from menu tracking.
     func menuDidOpen() {
         if !menuOpen {
             menuOpen = true
@@ -937,17 +949,19 @@ final class AppModel {
         }
         let config = dashboard.profiles.activeProfile?.rawConfig ?? VPNManager.defaultDirectConfig
         let overlay = dashboard.profiles.overlay
-        // Mixed-port first: it runs in this process and comes up in well under
-        // a second, while TUN waits on the system extension and the tunnel.
-        // After an unclean exit (crash, Xcode Stop) the system proxy still
-        // points at its port, so every app is refused until it listens.
-        await applyMixedPort(config: config, overlay: overlay)
-        // A newer takeover was scheduled; it owns the TUN state.
-        guard !Task.isCancelled else { return }
-        if tunModeEnabled {
+        if !tunModeEnabled {
+            dashboard.vpn.stopVPN()
+            await applyMixedPort(config: config, overlay: overlay)
+        } else {
+            // Run mixed-port and TUN startup concurrently so a slow System
+            // Proxy helper write never delays bringing up the tunnel.
+            async let mixedPort: Void = applyMixedPort(config: config, overlay: overlay)
             do {
                 try await TunnelSystemExtension.activate()
-                guard !Task.isCancelled, tunModeEnabled else { return }
+                guard !Task.isCancelled, tunModeEnabled else {
+                    _ = await mixedPort
+                    return
+                }
                 try await dashboard.vpn.startVPN(
                     configText: config,
                     fakeIP: true,
@@ -956,6 +970,7 @@ final class AppModel {
                     overlay: overlay
                 )
             } catch is CancellationError {
+                _ = await mixedPort
                 return
             } catch {
                 TunnelLog.write(.error, "TUN start failed: \(error.localizedDescription)")
@@ -963,9 +978,9 @@ final class AppModel {
                 tunModeEnabled = false
                 dashboard.vpn.stopVPN()
             }
-        } else {
-            dashboard.vpn.stopVPN()
+            _ = await mixedPort
         }
+        guard !Task.isCancelled else { return }
         scheduleEgressRefresh()
     }
 
@@ -973,8 +988,9 @@ final class AppModel {
     private func applyMixedPort(config: String, overlay: ProfileOverlay) async {
         refreshInboundListen()
         if systemProxyEnabled {
-            ProxyHelperSetup.prepare()
+            await ProxyHelperSetup.prepare()
         }
+        guard !Task.isCancelled else { return }
         if systemProxyEnabled || allowLANEnabled {
             do {
                 // The runtime drops superseded requests and restores the
@@ -992,7 +1008,10 @@ final class AppModel {
                 TunnelLog.write(.error, "mixed-port failed: \(error.localizedDescription)")
             }
         } else {
-            mixedPortRuntime.shutdown()
+            let runtime = mixedPortRuntime
+            await Task.detached(priority: .userInitiated) {
+                runtime.shutdown()
+            }.value
             mixedPortListenError = nil
         }
         syncMixedPortState()
@@ -1112,6 +1131,67 @@ extension AppModel {
 
     func presentSettings(using openWindow: OpenWindowAction) {
         presentMain(using: openWindow, selecting: .settings)
+    }
+
+    /// AppKit entry points used by `MenuBarController` (no SwiftUI `OpenWindowAction`).
+    func presentInspector() {
+        isInspectorPresented = true
+        _ = Self.triggerMainMenuCommand(key: "i", modifiers: .command)
+        NSApp.activate(ignoringOtherApps: true)
+        DockPolicy.apply(menuBarOnly: menuBarOnly)
+    }
+
+    func presentNodePicker() {
+        _ = Self.triggerMainMenuCommand(key: "k", modifiers: .command)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func presentMain(selecting item: SidebarItem? = nil) {
+        if let item { selectedSidebarItem = item }
+        _ = Self.triggerMainMenuCommand(key: "0", modifiers: .command)
+        NSApp.activate(ignoringOtherApps: true)
+        DockPolicy.apply(menuBarOnly: menuBarOnly)
+    }
+
+    func presentSettings() {
+        presentMain(selecting: .settings)
+    }
+
+    private static func triggerMainMenuCommand(key: String, modifiers: NSEvent.ModifierFlags) -> Bool {
+        guard let mainMenu = NSApp.mainMenu else { return false }
+        func findItem(in menu: NSMenu) -> NSMenuItem? {
+            for item in menu.items {
+                if item.keyEquivalent == key && item.keyEquivalentModifierMask == modifiers {
+                    return item
+                }
+                if let sub = item.submenu, let match = findItem(in: sub) {
+                    return match
+                }
+            }
+            return nil
+        }
+        guard let item = findItem(in: mainMenu), let action = item.action else { return false }
+        return NSApp.sendAction(action, to: item.target, from: item)
+    }
+
+    private func installMenuBar() {
+        launchObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didFinishLaunchingNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if let observer = self.launchObserver {
+                    NotificationCenter.default.removeObserver(observer)
+                    self.launchObserver = nil
+                }
+                self.applyLaunchPolicy()
+                if self.menuBarController == nil {
+                    self.menuBarController = MenuBarController(appModel: self)
+                }
+            }
+        }
     }
 
     func quit() {

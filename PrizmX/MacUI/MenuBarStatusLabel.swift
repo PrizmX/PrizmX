@@ -3,51 +3,151 @@ import SwiftUI
 import PrizmXServices
 import PrizmXUIEngine
 
-/// Menu-bar extra label. SwiftUI is the only writer of the status-item image.
-/// Catalog assets already encode the looks — do not bake pixels onto `NSStatusBarButton`.
-struct MenuBarStatusLabel: View {
-    @Environment(AppModel.self) private var appModel
+/// Owns the macOS status item and its AppKit dropdown menu directly, avoiding
+/// SwiftUI `MenuBarExtra` item-array rebuilds and fullscreen Space issues.
+@MainActor
+final class MenuBarController: NSObject, NSMenuDelegate {
+    private weak var appModel: AppModel?
+    private let statusItem: NSStatusItem
+    private let menu = NSMenu()
+    private let rows: MenuBarDropdownItems
+    nonisolated(unsafe) private var tickTimer: Timer?
+    nonisolated(unsafe) private var eventObservers: [NSObjectProtocol] = []
+    nonisolated(unsafe) private var spaceObserver: NSObjectProtocol?
+    private var lastAccessibilityTitle: String?
+    private var temporarilyAccessory = false
 
-    var body: some View {
-        icon
-            .accessibilityLabel(Text(accessibilityTitle))
-            .help(accessibilityTitle)
-            .background(MenuBarShortcutBridge())
+    init(appModel: AppModel) {
+        self.appModel = appModel
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        rows = MenuBarDropdownItems(appModel: appModel)
+        super.init()
+
+        menu.delegate = self
+        rows.install(in: menu)
+        rows.refresh()
+
+        if let button = statusItem.button {
+            button.imagePosition = .imageOnly
+            button.target = self
+            button.action = #selector(statusItemClicked(_:))
+            button.sendAction(on: [.leftMouseDown, .rightMouseDown])
+        }
+
+        let center = NotificationCenter.default
+        eventObservers = [
+            center.addObserver(forName: AppEvent.toggleVPN, object: nil, queue: .main) { [weak appModel] _ in
+                MainActor.assumeIsolated {
+                    appModel?.tunModeEnabled.toggle()
+                }
+            },
+            center.addObserver(forName: AppEvent.presentNodePicker, object: nil, queue: .main) { [weak appModel] _ in
+                MainActor.assumeIsolated {
+                    appModel?.presentNodePicker()
+                }
+            },
+        ]
+        spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.menu.cancelTrackingWithoutAnimation()
+            }
+        }
+
+        observeStatusIcon()
     }
 
-    /// The label keeps only its first Image (a VStack keeps only its first
-    /// Text), so the rate column is composited into the icon image.
-    /// Only this label reads the per-second rates; the dropdown must not.
-    @ViewBuilder
-    private var icon: some View {
-        if appModel.showsMenuBarSpeed, let asset = NSImage(named: spec.assetName) {
-            Image(nsImage: MenuBarSpeedImage.make(
-                icon: asset,
-                isTemplate: spec.renderingMode == .template,
-                upload: appModel.dashboard.uploadSpeedString,
-                download: appModel.dashboard.downloadSpeedString
-            ))
-        } else {
-            Image(spec.assetName)
-                .renderingMode(spec.renderingMode)
+    deinit {
+        tickTimer?.invalidate()
+        eventObservers.forEach(NotificationCenter.default.removeObserver)
+        if let spaceObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver)
         }
     }
 
-    private var spec: MenuBarIconSpec {
-        MenuBarIconSpec(
+    private func observeStatusIcon() {
+        withObservationTracking {
+            updateStatusIcon()
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.observeStatusIcon()
+            }
+        }
+    }
+
+    private func updateStatusIcon() {
+        guard let appModel, let button = statusItem.button else { return }
+        let spec = MenuBarIconSpec(
             state: appModel.menuBarSessionState,
             connectedStyle: appModel.menuBarConnectedStyle
         )
+        if appModel.showsMenuBarSpeed, let asset = NSImage(named: spec.assetName) {
+            button.image = MenuBarSpeedImage.make(
+                icon: asset,
+                isTemplate: spec.isTemplate,
+                upload: appModel.dashboard.uploadSpeedString,
+                download: appModel.dashboard.downloadSpeedString
+            )
+        } else if let asset = NSImage(named: spec.assetName)?.copy() as? NSImage {
+            asset.isTemplate = spec.isTemplate
+            button.image = asset
+        }
+
+        let title = "PrizmX, \(appModel.menuBarSessionState.title)"
+        if lastAccessibilityTitle != title {
+            lastAccessibilityTitle = title
+            button.setAccessibilityLabel(title)
+            button.toolTip = title
+        }
     }
 
-    private var accessibilityTitle: String {
-        "PrizmX, \(appModel.menuBarSessionState.title)"
+    @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
+        if appModel?.menuBarOnly == false, !NSApp.isActive, NSApp.activationPolicy() == .regular {
+            NSApp.setActivationPolicy(.accessory)
+            temporarilyAccessory = true
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 5), in: sender)
+    }
+
+    // MARK: NSMenuDelegate
+
+    func menuWillOpen(_ menu: NSMenu) {
+        guard menu === self.menu else { return }
+        appModel?.menuDidOpen()
+        rows.refresh()
+        guard tickTimer == nil else { return }
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.rows.refresh()
+                self?.rows.policyMenu.refreshOpenGroup()
+            }
+        }
+        // Menu tracking spins the run loop in event-tracking mode.
+        RunLoop.main.add(timer, forMode: .common)
+        tickTimer = timer
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        guard menu === self.menu else { return }
+        tickTimer?.invalidate()
+        tickTimer = nil
+        rows.policyMenu.reset()
+        appModel?.menuDidClose()
+        if temporarilyAccessory {
+            temporarilyAccessory = false
+            if appModel?.menuBarOnly == false {
+                NSApp.setActivationPolicy(.regular)
+            }
+        }
     }
 }
 
 private struct MenuBarIconSpec {
     var assetName: String
-    var renderingMode: Image.TemplateRenderingMode
+    var isTemplate: Bool
 
     /// States differ by shape as well as tone, so they stay apart on light,
     /// dark and wallpaper-tinted bars and in black and white: off is a dimmed
@@ -56,21 +156,21 @@ private struct MenuBarIconSpec {
         switch state {
         case .idle:
             assetName = "MenuBarPrismIdle"
-            renderingMode = .template
+            isTemplate = true
         case .systemProxy:
             assetName = "MenuBarPrism"
-            renderingMode = .template
+            isTemplate = true
         case .tun:
             if connectedStyle == .monochrome {
                 assetName = "MenuBarPrismTun"
-                renderingMode = .template
+                isTemplate = true
             } else {
                 assetName = "MenuBarPrismOn"
-                renderingMode = .original
+                isTemplate = false
             }
         case .capture:
             assetName = "MenuBarPrismOn"
-            renderingMode = .original
+            isTemplate = false
         }
     }
 }
@@ -124,34 +224,4 @@ enum MenuBarSpeedImage {
     private static func width(_ text: String) -> CGFloat {
         (text as NSString).size(withAttributes: [.font: font]).width
     }
-}
-
-/// Lives on the always-mounted menu-bar label so shortcuts and dropdown hooks
-/// work while the menu is closed.
-private struct MenuBarShortcutBridge: View {
-    @Environment(AppModel.self) private var appModel
-    @Environment(\.openWindow) private var openWindow
-    @State private var dropdownHooks: MenuBarDropdownHooks?
-
-    var body: some View {
-        Color.clear
-            .frame(width: 0, height: 0)
-            .onReceive(NotificationCenter.default.publisher(for: AppEvent.toggleVPN)) { _ in
-                appModel.tunModeEnabled.toggle()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: AppEvent.presentNodePicker)) { _ in
-                appModel.presentNodePicker(using: openWindow)
-            }
-            .onAppear {
-                if dropdownHooks == nil {
-                    dropdownHooks = MenuBarDropdownHooks(appModel: appModel, openWindow: openWindow)
-                }
-            }
-    }
-}
-
-#Preview("Menu Bar Label") {
-    MenuBarStatusLabel()
-        .environment(AppModel.preview)
-        .padding()
 }

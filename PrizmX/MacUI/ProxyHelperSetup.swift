@@ -9,10 +9,15 @@ enum ProxyHelperSetup {
     /// Registers the helper the first time System Proxy is used and points
     /// the user at Login Items once. Until it is allowed there, the proxy
     /// settings are written with an authorization prompt as before.
-    static func prepare() {
+    static func prepare() async {
         // A failure is logged by `ProxyHelper` with its status.
-        if (try? ProxyHelper.registerIfNeeded()) == true, ProxyHelper.status == .requiresApproval {
-            SMAppService.openSystemSettingsLoginItems()
+        let shouldOpen = await Task.detached(priority: .userInitiated) {
+            (try? ProxyHelper.registerIfNeeded()) == true && ProxyHelper.status == .requiresApproval
+        }.value
+        if shouldOpen {
+            await MainActor.run {
+                SMAppService.openSystemSettingsLoginItems()
+            }
         }
     }
 }

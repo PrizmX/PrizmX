@@ -501,7 +501,8 @@ struct HomePane: View {
         case .reconnecting: "Reconnecting"
         case .disconnecting: "Disconnecting"
         case .error: "Error"
-        case .invalid, .disconnected: "Disconnected"
+        case .invalid, .disconnected:
+            appModel.systemProxyActive ? "Listening" : "Disconnected"
         }
     }
 
