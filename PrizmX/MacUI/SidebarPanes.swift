@@ -144,6 +144,7 @@ struct ComingSoonPane: View {
 
 struct SettingsPane: View {
     @Environment(AppModel.self) private var appModel
+    @State private var showingFakeIPFilters = false
 
     var body: some View {
         @Bindable var appModel = appModel
@@ -160,7 +161,7 @@ struct SettingsPane: View {
 
             Section("TUN") {
                 Toggle(isOn: $appModel.captureAllTrafficEnabled) {
-                    Text("Route All Traffic (Experimental)")
+                    Text("Route All Traffic")
                     Text("TUN also captures apps that connect to IP addresses directly, such as Telegram, games and WebRTC. Local networks stay direct. Restarts TUN.")
                 }
             }
@@ -169,6 +170,18 @@ struct SettingsPane: View {
                 Toggle(isOn: $appModel.overrideDNSEnabled) {
                     Text("Override DNS")
                     Text("Also resolve proxy servers with public and system DNS, and prefer addresses that worked before, instead of the profile's DNS alone. Leave off unless your provider asks for it.")
+                }
+                LabeledContent {
+                    Button("Manage…") { showingFakeIPFilters = true }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("Skip FakeIP")
+                        if !appModel.fakeIPFilters.isEmpty {
+                            Text("\(appModel.fakeIPFilters.count) custom")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text("Domains that receive real IP addresses instead of FakeIPs, such as *.example.com or internal hosts.")
                 }
                 LabeledContent {
                     Button("Clear") { appModel.clearDNSCache() }
@@ -227,6 +240,9 @@ struct SettingsPane: View {
         .scrollContentBackground(.hidden)
         .navigationTitle("Settings")
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .sheet(isPresented: $showingFakeIPFilters) {
+            FakeIPFilterSheet(filters: $appModel.fakeIPFilters)
+        }
     }
 
     private func labeledShortcut(_ name: String, _ keys: String) -> some View {
@@ -245,6 +261,86 @@ extension TunnelLog.Level {
         case .warn: "Warning"
         case .error: "Error"
         }
+    }
+}
+
+private struct FakeIPFilterSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var filters: [String]
+    @State private var draft: [String] = []
+    @State private var newPattern = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Skip FakeIP")
+                    .font(.headline)
+                Text("These domains bypass FakeIP and receive real IP addresses. Supports exact names and Clash wildcards like *.example.com.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 8) {
+                    TextField("Domain or pattern (e.g. *.example.com)", text: $newPattern)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit(addPattern)
+                    Button("Add", action: addPattern)
+                        .disabled(trimmedNewPattern.isEmpty)
+                }
+
+                if draft.isEmpty {
+                    Text("No custom domains added.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 140)
+                } else {
+                    List {
+                        ForEach(draft, id: \.self) { pattern in
+                            HStack {
+                                Text(pattern)
+                                    .font(.body.monospaced())
+                                Spacer()
+                                Button {
+                                    draft.removeAll { $0 == pattern }
+                                } label: {
+                                    Image(systemName: "trash")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Remove")
+                            }
+                        }
+                    }
+                    .listStyle(.bordered)
+                    .frame(height: 180)
+                }
+            }
+            .padding(20)
+
+            SheetActionBar(doneTitle: "Save") {
+                filters = draft
+                dismiss()
+            } leading: {
+                Button("Cancel") { dismiss() }
+            }
+        }
+        .frame(width: 440)
+        .onAppear {
+            draft = filters
+        }
+    }
+
+    private var trimmedNewPattern: String {
+        newPattern.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func addPattern() {
+        let pattern = trimmedNewPattern
+        guard !pattern.isEmpty else { return }
+        if !draft.contains(pattern) {
+            draft.append(pattern)
+        }
+        newPattern = ""
     }
 }
 

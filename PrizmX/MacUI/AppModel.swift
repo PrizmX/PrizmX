@@ -223,15 +223,29 @@ final class AppModel {
     var overrideDNSEnabled = false {
         didSet {
             guard overrideDNSEnabled != oldValue else { return }
-            do {
-                try DNSPreferenceStore.save(.init(overrideDNS: overrideDNSEnabled))
-            } catch {
-                TunnelLog.write(.error, "DNS preference save failed: \(error.localizedDescription)")
-                dashboard.profiles.recordError(error)
-                return
-            }
-            scheduleReload(reason: "override DNS \(overrideDNSEnabled ? "on" : "off")")
+            saveDNSPreferences(reason: "override DNS \(overrideDNSEnabled ? "on" : "off")")
         }
+    }
+    /// Global user-defined domain patterns that skip FakeIP and receive real
+    /// IP addresses (`DNSPreferenceStore`).
+    var fakeIPFilters: [String] = [] {
+        didSet {
+            guard fakeIPFilters != oldValue else { return }
+            saveDNSPreferences(reason: "fake-ip-filter updated")
+        }
+    }
+
+    private func saveDNSPreferences(reason: String) {
+        do {
+            try DNSPreferenceStore.save(
+                .init(overrideDNS: overrideDNSEnabled, fakeIPFilters: fakeIPFilters)
+            )
+        } catch {
+            TunnelLog.write(.error, "DNS preference save failed: \(error.localizedDescription)")
+            dashboard.profiles.recordError(error)
+            return
+        }
+        scheduleReload(reason: reason)
     }
     /// Settings switch (experimental): TUN takes the default route, so apps
     /// that dial IP addresses are captured too. `CapturePreferenceStore`
@@ -487,7 +501,9 @@ final class AppModel {
             analyticsEnabled = Analytics.isEnabled
             outboundMode = OutboundMode(rawValue: UserDefaults.standard.string(forKey: DefaultsKey.outboundMode) ?? "") ?? .rule
             eventsLogLevel = TunnelLog.minimumLevel
-            overrideDNSEnabled = DNSPreferenceStore.load().overrideDNS
+            let dnsPrefs = DNSPreferenceStore.load()
+            overrideDNSEnabled = dnsPrefs.overrideDNS
+            fakeIPFilters = dnsPrefs.fakeIPFilters
             captureAllTrafficEnabled = CapturePreferenceStore.load().allTraffic
             if dashboard.status == .connected {
                 sessionStartedAt = Date()
