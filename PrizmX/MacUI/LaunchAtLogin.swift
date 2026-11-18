@@ -1,3 +1,4 @@
+import AppKit
 import ServiceManagement
 import SwiftUI
 
@@ -21,7 +22,6 @@ enum LaunchAtLogin {
 }
 
 struct LaunchAtLoginToggle: View {
-    @Environment(\.scenePhase) private var scenePhase
     @State private var status: SMAppService.Status = .notRegistered
     @State private var errorMessage: String?
 
@@ -34,8 +34,11 @@ struct LaunchAtLoginToggle: View {
             Text(subtitle)
         }
         .onAppear(perform: refresh)
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refresh()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            refresh()
         }
     }
 
