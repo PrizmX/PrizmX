@@ -16,6 +16,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     nonisolated(unsafe) private var spaceObserver: NSObjectProtocol?
     private var lastAccessibilityTitle: String?
     private var temporarilyAccessory = false
+    private var presentationObserver: NSKeyValueObservation?
+    private var isTracking = false
 
     init(appModel: AppModel) {
         self.appModel = appModel
@@ -57,7 +59,25 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             }
         }
 
+        configureMenuPresentation()
+        presentationObserver = NSApp.observe(\.currentSystemPresentationOptions) { [weak self] _, _ in
+            Task { @MainActor in self?.configureMenuPresentation() }
+        }
         observeStatusIcon()
+    }
+
+    // On a normal desktop the status item owns the menu before mouse-down:
+    // AppKit handles highlighting, tracking and Space transitions itself.
+    // Reserve the pre-click activation-policy workaround for fullscreen only.
+    private func configureMenuPresentation() {
+        guard !isTracking, !temporarilyAccessory else { return }
+        if NSApp.currentSystemPresentationOptions.contains(.fullScreen), NSApp.activationPolicy() == .regular {
+            statusItem.menu = nil
+            statusItem.button?.target = self
+            statusItem.button?.action = #selector(statusItemClicked(_:))
+        } else if statusItem.menu !== menu {
+            statusItem.menu = menu
+        }
     }
 
     deinit {
@@ -105,17 +125,20 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
+        guard statusItem.menu == nil else { return }
         if appModel?.menuBarOnly == false, !NSApp.isActive, NSApp.activationPolicy() == .regular {
             NSApp.setActivationPolicy(.accessory)
             temporarilyAccessory = true
         }
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 5), in: sender)
+        statusItem.menu = menu
+        sender.performClick(nil)
     }
 
     // MARK: NSMenuDelegate
 
     func menuWillOpen(_ menu: NSMenu) {
         guard menu === self.menu else { return }
+        isTracking = true
         appModel?.menuDidOpen()
         rows.refresh()
         guard tickTimer == nil else { return }
@@ -132,6 +155,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     func menuDidClose(_ menu: NSMenu) {
         guard menu === self.menu else { return }
+        isTracking = false
         tickTimer?.invalidate()
         tickTimer = nil
         rows.policyMenu.reset()
@@ -142,6 +166,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 NSApp.setActivationPolicy(.regular)
             }
         }
+        configureMenuPresentation()
     }
 }
 
