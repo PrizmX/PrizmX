@@ -14,6 +14,7 @@
 		5B6040F8303FEE1400F6C849 /* PrizmXConfig in Frameworks */ = {isa = PBXBuildFile; productRef = 5B6040F9303FEE1400F6C84A /* PrizmXConfig */; };
 		5B7A1104304B1001000A04 /* PrizmXUIEngine in Frameworks */ = {isa = PBXBuildFile; productRef = 5B7A1102304B1001000A02 /* PrizmXUIEngine */; };
 		5B7A1105304B1001000A05 /* PrizmXUIComponents in Frameworks */ = {isa = PBXBuildFile; productRef = 5B7A1103304B1001000A03 /* PrizmXUIComponents */; };
+		5B7A1109304B1001000A09 /* PrizmXMacUI in Frameworks */ = {isa = PBXBuildFile; productRef = 5B7A1108304B1001000A08 /* PrizmXMacUI */; };
 		5BA11A01305C0101000C01 /* PrizmXAttribution in Frameworks */ = {isa = PBXBuildFile; productRef = 5BA11A02305C0101000C02 /* PrizmXAttribution */; };
 		5BC0A003306A0001000A0003 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = 5BC0A002306A0001000A0002 /* PostHog */; };
 		5BD1E003306B0001000A0003 /* PrizmXHelper in Embed Helper */ = {isa = PBXBuildFile; fileRef = 5BD1E001306B0001000A0001 /* PrizmXHelper */; };
@@ -120,6 +121,7 @@
 				5B6040F8303FEE1400F6C849 /* PrizmXConfig in Frameworks */,
 				5B7A1104304B1001000A04 /* PrizmXUIEngine in Frameworks */,
 				5B7A1105304B1001000A05 /* PrizmXUIComponents in Frameworks */,
+				5B7A1109304B1001000A09 /* PrizmXMacUI in Frameworks */,
 				5BC0A003306A0001000A0003 /* PostHog in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -195,6 +197,7 @@
 				5B6040F9303FEE1400F6C84A /* PrizmXConfig */,
 				5B7A1102304B1001000A02 /* PrizmXUIEngine */,
 				5B7A1103304B1001000A03 /* PrizmXUIComponents */,
+				5B7A1108304B1001000A08 /* PrizmXMacUI */,
 				5BC0A002306A0001000A0002 /* PostHog */,
 			);
 			productName = PrizmX;
@@ -332,7 +335,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# sysextd only replaces an activated extension when its bundle\n# version changes. A fixed 1.0/1 means dev builds never reach the\n# running tunnel; stamp a timestamp build version before signing.\nPLIST=\"${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}/Contents/Info.plist\"\nif [ -f \"$PLIST\" ]; then\n  STAMP=$(date +%Y%m%d%H%M)\n  /usr/libexec/PlistBuddy -c \"Set :CFBundleVersion $STAMP\" \"$PLIST\" || exit 1\n  echo \"Stamped CFBundleVersion=$STAMP -> $PLIST\"\nfi\n";
+			shellScript = "# sysextd only replaces an activated extension when its bundle\n# version changes. In Debug, reuse the previous stamp when the\n# PacketTunnel binary is unchanged so UI-only rebuilds avoid\n# unnecessary sysextd hot-replacements.\nPLIST=\"${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}/Contents/Info.plist\"\nBIN=\"${BUILT_PRODUCTS_DIR}/${EXECUTABLE_PATH}\"\nSTATE=\"${OBJROOT}/prizmx-tunnel-version.state\"\nif [ -f \"$PLIST\" ]; then\n  STAMP=$(date +%Y%m%d%H%M)\n  if [ \"${CONFIGURATION}\" = \"Debug\" ] && [ -f \"$BIN\" ]; then\n    HASH=$(/usr/bin/shasum -a 256 \"$BIN\" | awk '{print $1}')\n    PREV_HASH=\"\"\n    PREV_STAMP=\"\"\n    if [ -f \"$STATE\" ]; then\n      read -r PREV_HASH PREV_STAMP < \"$STATE\" || true\n    fi\n    if [ \"$HASH\" = \"$PREV_HASH\" ] && [ -n \"$PREV_STAMP\" ]; then\n      STAMP=\"$PREV_STAMP\"\n    else\n      if [ \"$STAMP\" = \"$PREV_STAMP\" ]; then\n        STAMP=$((PREV_STAMP + 1))\n      fi\n      echo \"$HASH $STAMP\" > \"$STATE\"\n    fi\n  fi\n  /usr/libexec/PlistBuddy -c \"Set :CFBundleVersion $STAMP\" \"$PLIST\" || exit 1\n  echo \"Stamped CFBundleVersion=$STAMP -> $PLIST\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -772,6 +775,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 5B7A1101304B1001000A01 /* XCLocalSwiftPackageReference "../PrizmX-Kit" */;
 			productName = PrizmXUIComponents;
+		};
+		5B7A1108304B1001000A08 /* PrizmXMacUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5B7A1101304B1001000A01 /* XCLocalSwiftPackageReference "../PrizmX-Kit" */;
+			productName = PrizmXMacUI;
 		};
 		5BA11A02305C0101000C02 /* PrizmXAttribution */ = {
 			isa = XCSwiftPackageProductDependency;

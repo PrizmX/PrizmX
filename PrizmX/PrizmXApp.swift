@@ -1,12 +1,36 @@
 import AppKit
 import SwiftUI
+import PrizmXMacUI
 
 @main
 struct PrizmXApp: App {
-    @State private var appModel = AppModel()
+    @State private var appModel: AppModel
 
     init() {
         Analytics.start()
+        let config = MacHostConfiguration(
+            capabilities: .community,
+            analytics: MacAnalyticsAdapter(
+                isEnabled: { Analytics.isEnabled },
+                setEnabled: { Analytics.setEnabled($0) },
+                updateProxyState: { tun, systemProxy in
+                    Analytics.updateProxyState(tun: tun, systemProxy: systemProxy)
+                }
+            ),
+            activateTunnelExtension: {
+                try await TunnelSystemExtension.activate()
+            },
+            needsTunnelExtensionUpgrade: {
+                TunnelSystemExtension.needsUpgrade
+            },
+            prepareSystemProxyHelper: {
+                await ProxyHelperSetup.prepare()
+            },
+            plugins: MacHostPlugins(
+                settingsGeneralExtra: { AnyView(ProxyHelperRow()) }
+            )
+        )
+        _appModel = State(initialValue: AppModel(configuration: config))
     }
 
     var body: some Scene {
@@ -17,8 +41,6 @@ struct PrizmXApp: App {
         }
         .defaultSize(width: 980, height: 640)
         .defaultLaunchBehavior(appModel.menuBarOnly ? .suppressed : .presented)
-        // App-wide commands live on the main window scene only; attaching the
-        // same set to every scene would duplicate menu items.
         .commands {
             AppCommands(appModel: appModel)
         }
@@ -28,7 +50,6 @@ struct PrizmXApp: App {
                 NodeSelectPane()
             }
             .environment(appModel)
-            // Below 540 pt the toolbar pushes the search field into overflow.
             .frame(minWidth: 540, minHeight: 480)
         }
         .defaultSize(width: 600, height: 560)
@@ -41,29 +62,5 @@ struct PrizmXApp: App {
         }
         .defaultSize(width: 1100, height: 700)
         .defaultLaunchBehavior(.suppressed)
-    }
-}
-
-/// Secondary SwiftUI windows default to zoom (+). Match the main window fullscreen traffic light.
-private struct FullScreenPrimaryWindow: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async { Self.apply(view.window) }
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        Self.apply(nsView.window)
-    }
-
-    private static func apply(_ window: NSWindow?) {
-        guard let window else { return }
-        let next = window.collectionBehavior
-            .union([.fullScreenPrimary, .fullScreenAllowsTiling])
-            .subtracting(.fullScreenAuxiliary)
-        // Assigning the same value still refreshes the titlebar. Collapse
-        // updates this view, so an unconditional write flashes the toolbar.
-        guard next != window.collectionBehavior else { return }
-        window.collectionBehavior = next
     }
 }

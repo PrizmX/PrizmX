@@ -5,8 +5,27 @@ import PrizmXProtocols
 
 /// Activates the Developer ID Packet Tunnel system extension before NEVPN start.
 enum TunnelSystemExtension {
+    private static let activatedVersionKey = "prizmx.sysext.lastActivatedVersion"
+
     static var identifier: String {
         (Bundle.main.bundleIdentifier ?? "app.prizmx.macos") + ".packet-tunnel"
+    }
+
+    /// CFBundleVersion of the embedded .systemextension inside this app bundle.
+    static var bundledVersion: String? {
+        let url = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Library/SystemExtensions/\(identifier).systemextension/Contents/Info.plist")
+        guard let dict = NSDictionary(contentsOf: url) else { return nil }
+        return dict["CFBundleVersion"] as? String
+    }
+
+    /// True when the bundled extension version differs from the last activated
+    /// version recorded by this app, indicating sysextd will perform an in-place
+    /// replacement.
+    static var needsUpgrade: Bool {
+        guard let current = bundledVersion else { return false }
+        let previous = UserDefaults.standard.string(forKey: activatedVersionKey)
+        return previous != nil && previous != current
     }
 
     @MainActor
@@ -16,6 +35,9 @@ enum TunnelSystemExtension {
             throw TunnelSystemExtensionError.notInApplications(path)
         }
         try await Activator.shared.activate()
+        if let current = bundledVersion {
+            UserDefaults.standard.set(current, forKey: activatedVersionKey)
+        }
     }
 }
 
@@ -106,10 +128,6 @@ private final class Activator: NSObject, OSSystemExtensionRequestDelegate {
         finish(throwing: Self.friendlyError(error))
     }
 
-    /// sysextd validates the on-disk host bundle when realizing the extension
-    /// reference. If an unsigned / modified binary was copied into the
-    /// installed PrizmX.app, the request fails with a cryptic
-    /// `sysextd.ExtensionReference.referenceErrors` — translate that.
     private static func friendlyError(_ error: Error) -> Error {
         let nsError = error as NSError
         if nsError.domain.contains("sysextd"), nsError.domain.contains("reference") {
