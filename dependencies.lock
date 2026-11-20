@@ -2,5 +2,5 @@
 # Format: <repo>=<full commit SHA>. Regenerate with
 # scripts/update_dependencies_lock.sh; do not edit by hand.
 PrizmX-Foundation=78ab58a02186864e49c9ec84de5cebdfdcd5e8bc
-PrizmX-Kit=df4dd14d4704d78884d7f9139a4d82056b3a9d91
+PrizmX-Kit=fb280587e3d52e7bdd531f75363ebb6582bfc3b4
 SwiftTCP=9d3b7ab5eebe9fdc8f705d7b51fe3b09bc898d5f
