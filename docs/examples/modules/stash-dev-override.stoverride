@@ -1,0 +1,24 @@
+name: Stash Dev Override Sample
+desc: Demonstrates Stash .stoverride YAML rules, hosts, FakeIP filters, and MITM skip reporting.
+category: Examples
+author: PrizmX Community
+homepage: https://github.com/PrizmX/PrizmX
+
+rules:
+  - DOMAIN-SUFFIX,metrics.example.org,REJECT
+  - IP-CIDR,203.0.113.0/24,DIRECT,no-resolve
+  - DST-PORT,9443,DIRECT
+
+hosts:
+  db.dev.internal: 10.0.0.50
+  cache.dev.internal:
+    - 10.0.0.51
+
+dns:
+  fake-ip-filter:
+    - "*.dev.internal"
+    - "localhost.ptlogin2.qq.com"
+
+http:
+  mitm:
+    - "api.example.org"

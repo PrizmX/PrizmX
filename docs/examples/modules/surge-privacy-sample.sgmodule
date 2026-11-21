@@ -1,0 +1,25 @@
+#!name=Surge Privacy & Dev Sample
+#!desc=Demonstrates Surge .sgmodule rules, hosts, FakeIP bypass, arguments, and MITM skip reporting.
+#!category=Examples
+#!author=PrizmX Community
+#!homepage=https://github.com/PrizmX/PrizmX
+#!arguments=ad_policy:REJECT,local_ip:127.0.0.1
+
+[General]
+always-real-ip = %APPEND% *.dev.internal, api.local.test
+
+[Rule]
+DOMAIN-SUFFIX,doubleclick.net,{{{ad_policy}}}
+DOMAIN-KEYWORD,adservice,{{{ad_policy}}}
+IP-CIDR,198.51.100.0/24,DIRECT,no-resolve
+DEST-PORT,8443,{{{ad_policy}}}
+AND,((DOMAIN-SUFFIX,telemetry.example.com),(NETWORK,UDP)),{{{ad_policy}}}
+
+[Host]
+app.dev.internal = {{{local_ip}}}
+
+[URL Rewrite]
+^https://example\.com/banner _ reject
+
+[MITM]
+hostname = %APPEND% *.example.com
