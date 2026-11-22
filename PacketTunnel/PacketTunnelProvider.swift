@@ -269,6 +269,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         switch request.method {
         case .fetchMetrics:
             reply(.success(metrics: lastMetrics.withLock { $0 }), completionHandler)
+        case .fetchProxyClients:
+            reply(.success(proxyClients: proxyClients()), completionHandler)
         case .selectNode:
             guard let nodeID = request.nodeID, let group = request.groupName else {
                 completionHandler?(try? TunnelIPC.encode(.failure("selectNode missing nodeID/groupName")))
@@ -552,10 +554,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// could not place from this. The table is read when the app asks, so
     /// every socket opened before the request is listed if it is still alive
     /// (the app relies on it). An empty list is an answer: no such client.
-    private func proxyClientsJSON() -> Data? {
+    private func proxyClients() -> [LoopbackClient]? {
         let (attributor, ports) = shared.withLockUnchecked { ($0.attributor, $0.proxyListenPorts) }
         guard let attributor else { return nil }
-        return try? JSONEncoder().encode(attributor.loopbackClients(listenPorts: ports))
+        return attributor.loopbackClients(listenPorts: ports)
+    }
+
+    private func proxyClientsJSON() -> Data? {
+        guard let clients = proxyClients() else { return nil }
+        return try? JSONEncoder().encode(clients)
     }
 
     private func reply(
